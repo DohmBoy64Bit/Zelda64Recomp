@@ -77,14 +77,21 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 # AeroAssault64: skip MM patches.elf / N64Recomp patches.toml; use repo-root tools/phase6_no_mm_engine stubs.
 # Prereq: run python3 tools/phase6_materialize_no_mm_engine_files.py from AeroAssault64 repo root (installs RecompiledPatches/*.h + recomp_overlays.inl).
 option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM patch pipeline)" OFF)
-# AFA retail bring-up without MM patches.elf / patches.toml: same PatchesLib + RSP stub strategy as NO_MM_ROM
-# when rsp/*.cpp are absent, but intended for AFA N64Recomp (config/aerofighters_assault.n64recomp.toml) with NO_MM_ROM OFF.
-option(AEROASSAULT64_AFA_PRODUCT "Stub engine PatchesLib + RSP (if rsp/*.cpp missing); skips MM N64Recomp patches.toml pipeline" OFF)
+# AFA retail bring-up: with AFA_PRODUCT only, use stub PatchesLib + RSP unless rsp/*.cpp exist (same as NO_MM_ROM).
+# With AFA_PRODUCT + AEROASSAULT64_AFA_RETAIL_PIPELINES, use upstream PatchesLib (patches.elf + N64Recomp patches.toml) and real rsp/*.cpp when present.
+option(AEROASSAULT64_AFA_PRODUCT "AFA USA GameEntry + branding hooks; default stub Patches/RSP unless AFA_RETAIL_PIPELINES" OFF)
+option(AEROASSAULT64_AFA_RETAIL_PIPELINES "Requires AFA_PRODUCT: use real patches.elf + patches.toml PatchesLib path (and RSP outputs when present); see AFA_PORT.md" OFF)
 set(AEROASSAULT64_STUB_DIR "${CMAKE_SOURCE_DIR}/../../tools/phase6_no_mm_engine")
 
 set(_AERO_PATCH_RSP_STUBS OFF)
-if(AEROASSAULT64_NO_MM_ROM OR AEROASSAULT64_AFA_PRODUCT)
+if(AEROASSAULT64_NO_MM_ROM)
     set(_AERO_PATCH_RSP_STUBS ON)
+elseif(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_AFA_RETAIL_PIPELINES)
+    set(_AERO_PATCH_RSP_STUBS ON)
+endif()
+
+if(AEROASSAULT64_AFA_RETAIL_PIPELINES AND NOT AEROASSAULT64_AFA_PRODUCT)
+    message(WARNING "AEROASSAULT64_AFA_RETAIL_PIPELINES is ignored unless AEROASSAULT64_AFA_PRODUCT is ON.")
 endif()
 
 # AeroAssault64 fork: optional second GameEntry for AFA USA + branding (see cmake/aero_build_config.h.in, Docs/Workflow.md).
@@ -188,8 +195,8 @@ if(_AERO_PATCH_RSP_STUBS)
         ${AEROASSAULT64_STUB_DIR}/patches_stub.c
         ${AEROASSAULT64_STUB_DIR}/patches_bin_stub.c
     )
-    if(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_NO_MM_ROM)
-        message(STATUS "AEROASSAULT64_AFA_PRODUCT: PatchesLib uses phase6_no_mm_engine stubs (no lib/Zelda64Recomp/patches.elf pipeline). Run python3 tools/phase6_materialize_no_mm_engine_files.py (repo root) for RecompiledPatches/*.h.")
+    if(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_NO_MM_ROM AND NOT AEROASSAULT64_AFA_RETAIL_PIPELINES)
+        message(STATUS "AEROASSAULT64_AFA_PRODUCT: PatchesLib uses phase6_no_mm_engine stubs (no lib/Zelda64Recomp/patches.elf pipeline). Run python3 tools/phase6_materialize_no_mm_engine_files.py (repo root) for RecompiledPatches/*.h. For real patches + N64Recomp, set -DAEROASSAULT64_AFA_RETAIL_PIPELINES=ON (see AFA_PORT.md).")
     endif()
 else()
     target_sources(PatchesLib PRIVATE
