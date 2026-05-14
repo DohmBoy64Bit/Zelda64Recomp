@@ -2,7 +2,12 @@
 #include <vector>
 #include <string>
 #include "zelda_debug.h"
+#include "aero_build_config.h"
 
+#if AEROASSAULT64_AFA_PRODUCT
+// MM-only debug warp table — empty for AFA retail until AFA areas are authored (zelda_debug.h / do_warp).
+std::vector<zelda64::AreaWarps> zelda64::game_warps{};
+#else
 std::vector<zelda64::AreaWarps> zelda64::game_warps {
     { "Clock Town", {
         {
@@ -848,4 +853,5 @@ std::vector<zelda64::AreaWarps> zelda64::game_warps {
         }
     }},
 };
+#endif
 

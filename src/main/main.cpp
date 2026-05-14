@@ -695,7 +695,10 @@ int main(int argc, char** argv) {
         recomp::register_game(game);
     }
 
+#if !AEROASSAULT64_AFA_PRODUCT
+    // MM-only embedded mod; AFA mod_game_id is "afa" — ship AFA-specific mods separately (see AFA_PORT.md).
     recomp::mods::register_embedded_mod("mm_recomp_dpad_builtin", { (const uint8_t*)(mm_recomp_dpad_builtin), std::size(mm_recomp_dpad_builtin)});
+#endif
 
     REGISTER_FUNC(recomp_get_window_resolution);
     REGISTER_FUNC(recomp_get_target_aspect_ratio);
