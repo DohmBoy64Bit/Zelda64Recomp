@@ -119,6 +119,14 @@ if(_AFA_XXH3)
     endif()
 endif()
 
+if(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_WITH_AFA_USA)
+    message(WARNING
+        "AEROASSAULT64_AFA_PRODUCT is ON but no valid AFA USA XXH3 was configured — "
+        "AFA GameEntry is omitted and the launcher still targets Majora's Mask only. "
+        "Set -DAEROASSAULT64_AFA_ROM_XXH3_HEX=<16 hex digits> or add config/.afa_usa_rom_xxh3 "
+        "(see tools/compute_aero_rom_xxh3.py at AeroAssault64 repo root).")
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/cmake/aero_build_config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/aero_build_config.h"

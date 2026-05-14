@@ -7,6 +7,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <cinttypes>
+#include <string>
 
 #include "nfd.h"
 
@@ -352,8 +353,7 @@ gpr get_entrypoint_address();
 namespace {
 
 std::vector<recomp::GameEntry> make_supported_games() {
-    std::vector<recomp::GameEntry> games;
-    games.push_back({
+    const recomp::GameEntry mm_entry{
         .rom_hash = 0xEF18B4A9E2386169ULL,
         .internal_name = "ZELDA MAJORA'S MASK",
         .game_id = u8"mm.n64.us.1.0",
@@ -364,10 +364,10 @@ std::vector<recomp::GameEntry> make_supported_games() {
         .has_compressed_code = true,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
-    });
+    };
 #if AEROASSAULT64_WITH_AFA_USA
     // Title @ ROM 0x20 — 20-byte cart name (see Docs/Workflow.md § Phase 2 / tools/ghidra/Phase2_Closeout_Report.py).
-    games.push_back({
+    const recomp::GameEntry afa_entry{
         .rom_hash = AEROASSAULT64_AFA_USA_ROM_XXH3_VALUE,
         .internal_name = "AERO FIGHTERS ASSAUL",
         .game_id = u8"afa.n64.us.1.0",
@@ -378,7 +378,18 @@ std::vector<recomp::GameEntry> make_supported_games() {
         .has_compressed_code = false,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
-    });
+    };
+#endif
+    std::vector<recomp::GameEntry> games;
+#if AEROASSAULT64_AFA_PRODUCT && AEROASSAULT64_WITH_AFA_USA
+    // Retail AFA build: launcher / ROM dialog target AFA first (librecomp recomp.cpp hash match).
+    games.push_back(afa_entry);
+    games.push_back(mm_entry);
+#elif AEROASSAULT64_WITH_AFA_USA
+    games.push_back(mm_entry);
+    games.push_back(afa_entry);
+#else
+    games.push_back(mm_entry);
 #endif
     return games;
 }
@@ -389,6 +400,11 @@ std::vector<recomp::GameEntry> supported_games = make_supported_games();
 
 // TODO: move somewhere else
 namespace zelda64 {
+
+const std::u8string& primary_supported_game_id() {
+    return supported_games[0].game_id;
+}
+
     std::string get_game_thread_name(const OSThread* t) {
         std::string name = "[Game] ";
 

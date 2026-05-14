@@ -1,5 +1,6 @@
 #include "recomp_ui.h"
 #include "zelda_config.h"
+#include "zelda_game.h"
 #include "zelda_support.h"
 #include "librecomp/game.hpp"
 #include "ultramodern/ultramodern.hpp"
@@ -10,6 +11,7 @@
 static std::string version_string;
 
 Rml::DataModelHandle model_handle;
+// RML model key remains mm_rom_valid (launcher.rml); value tracks primary_supported_game_id() ROM validity.
 bool mm_rom_valid = false;
 
 extern std::vector<recomp::GameEntry> supported_games;
@@ -18,7 +20,7 @@ void select_rom() {
     nfdnchar_t* native_path = nullptr;
     zelda64::open_file_dialog([](bool success, const std::filesystem::path& path) {
         if (success) {
-            recomp::RomValidationError rom_error = recomp::select_rom(path, supported_games[0].game_id);
+            recomp::RomValidationError rom_error = recomp::select_rom(path, zelda64::primary_supported_game_id());
             switch (rom_error) {
                 case recomp::RomValidationError::Good:
                     mm_rom_valid = true;
@@ -57,7 +59,7 @@ recompui::ContextId recompui::get_launcher_context_id() {
 class LauncherMenu : public recompui::MenuController {
 public:
     LauncherMenu() {
-        mm_rom_valid = recomp::is_rom_valid(supported_games[0].game_id);
+        mm_rom_valid = recomp::is_rom_valid(zelda64::primary_supported_game_id());
     }
     ~LauncherMenu() override {
 
@@ -79,7 +81,7 @@ public:
         );
         recompui::register_event(listener, "start_game",
             [](const std::string& param, Rml::Event& event) {
-                recomp::start_game(supported_games[0].game_id);
+                recomp::start_game(zelda64::primary_supported_game_id());
                 recompui::hide_all_contexts();
             }
         );
