@@ -92,6 +92,9 @@ file(GLOB FUNC_CXX_SOURCES ${CMAKE_SOURCE_DIR}/RecompiledFuncs/*.cpp)
 
 target_sources(RecompiledFuncs PRIVATE ${FUNC_C_SOURCES} ${FUNC_CXX_SOURCES})
 
+# N64Recomp emits `void main(rdram, ctx)` in funcs.h; C++ reserves `::main` (must return int). Rename only for RecompiledFuncs.
+target_compile_definitions(RecompiledFuncs PRIVATE main=recomp_rom_main)
+
 # PatchesLib - Library containing the recompiled output for any custom function patches
 add_library(PatchesLib STATIC)
 
