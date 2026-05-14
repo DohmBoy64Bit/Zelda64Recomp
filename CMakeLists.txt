@@ -75,7 +75,7 @@ target_compile_definitions(rmlui_core PRIVATE LUNASVG_BUILD_STATIC)
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 
 # AeroAssault64: skip MM patches.elf / N64Recomp patches.toml; use repo-root tools/phase6_no_mm_engine stubs.
-# Prereq: run tools/phase6_materialize_no_mm_engine_files.ps1 from AeroAssault64 repo root (installs RecompiledPatches/*.h + recomp_overlays.inl).
+# Prereq: run python3 tools/phase6_materialize_no_mm_engine_files.py from AeroAssault64 repo root (installs RecompiledPatches/*.h + recomp_overlays.inl).
 option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM patch pipeline)" OFF)
 # AFA retail bring-up without MM patches.elf / patches.toml: same PatchesLib + RSP stub strategy as NO_MM_ROM
 # when rsp/*.cpp are absent, but intended for AFA N64Recomp (config/aerofighters_assault.n64recomp.toml) with NO_MM_ROM OFF.
@@ -181,7 +181,7 @@ if(_AERO_PATCH_RSP_STUBS)
         ${AEROASSAULT64_STUB_DIR}/patches_bin_stub.c
     )
     if(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_NO_MM_ROM)
-        message(STATUS "AEROASSAULT64_AFA_PRODUCT: PatchesLib uses phase6_no_mm_engine stubs (no lib/Zelda64Recomp/patches.elf pipeline). Run tools/phase6_materialize_no_mm_engine_files.ps1 for RecompiledPatches/*.h.")
+        message(STATUS "AEROASSAULT64_AFA_PRODUCT: PatchesLib uses phase6_no_mm_engine stubs (no lib/Zelda64Recomp/patches.elf pipeline). Run python3 tools/phase6_materialize_no_mm_engine_files.py (repo root) for RecompiledPatches/*.h.")
     endif()
 else()
     target_sources(PatchesLib PRIVATE
