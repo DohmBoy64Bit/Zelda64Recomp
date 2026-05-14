@@ -729,7 +729,7 @@ int main(int argc, char** argv) {
         .get_connected_device_info = recomp::get_connected_device_info,
     };
 
-    ultramodern::events::callbacks_t thread_callbacks{
+    ultramodern::events::callbacks_t events_callbacks{
         .vi_callback = recomp::update_rumble,
         .gfx_init_callback = recompui::update_supported_options,
     };
@@ -755,18 +755,19 @@ int main(int argc, char** argv) {
     // Register the .rtz texture pack file format with the previous content type as its only allowed content type.
     recomp::mods::register_mod_container_type("rtz", std::vector{ texture_pack_content_type_id }, false);
 
-    recomp::start(
-        project_version,
-        {},
-        rsp_callbacks,
-        renderer_callbacks,
-        audio_callbacks,
-        input_callbacks,
-        gfx_callbacks,
-        thread_callbacks,
-        error_handling_callbacks,
-        threads_callbacks
-    );
+    recomp::start(recomp::Configuration{
+        .project_version = project_version,
+        .window_handle = {},
+        .rsp_callbacks = rsp_callbacks,
+        .renderer_callbacks = renderer_callbacks,
+        .audio_callbacks = audio_callbacks,
+        .input_callbacks = input_callbacks,
+        .gfx_callbacks = gfx_callbacks,
+        .events_callbacks = events_callbacks,
+        .error_handling_callbacks = error_handling_callbacks,
+        .threads_callbacks = threads_callbacks,
+        .message_queue_control = {},
+    });
 
     NFD_Quit();
 
