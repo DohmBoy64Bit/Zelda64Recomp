@@ -10,10 +10,30 @@ This file backs the **Docs/Workflow.md** checklist row *AFA fork — full retail
    - **`../../config/afa_rsp/aspMain.afa.us.template.toml`**
    - **`../../config/afa_rsp/njpgdspMain.afa.us.template.toml`**
 2. Copy the filled files into **`lib/Zelda64Recomp/`** (engine root), e.g. **`aspMain.afa.us.toml`**, **`njpgdspMain.afa.us.toml`**.
-3. Place **`afa.n64.us.z64`** next to those TOMLs (or adjust **`rom_file_path`** to match where the byteswapped USA ROM lives) — same idea as **`mm.us.rev1.rom_uncompressed.z64`** for MM in **`BUILDING.md`** §3–4.
+3. Place **`afa.n64.us.z64`** next to those TOMLs (or adjust **`rom_file_path`** to match where the byteswapped USA ROM lives) — same idea as **`mm.us.rev1.rom_uncompressed.z64`** for MM in upstream **`BUILDING.md`** §3–4 (when that doc is present in your engine tree).
 4. From **engine root**, run **`RSPRecomp.exe`** the same way as upstream:
-   - **`./RSPRecomp aspMain.us.rev1.toml`** → your **`./RSPRecomp aspMain.afa.us.toml`** (Windows: **`RSPRecomp.exe …`** per **`BUILDING.md`** §4).
-5. Confirm **`lib/Zelda64Recomp/rsp/aspMain.cpp`** and **`rsp/njpgdspMain.cpp`** exist (gitignored upstream). CMake then links real RSP when both files exist **even in stub mode** (see **`CMakeLists.txt`** `rsp/*.cpp` / stub branch).
+   - **`./RSPRecomp aspMain.us.rev1.toml`** → your **`./RSPRecomp aspMain.afa.us.toml`** (Windows: **`RSPRecomp.exe …`** per upstream **`BUILDING.md`** §4), or from repo root **`pwsh tools/phase6_rsprecomp_afa.ps1`** (**`-RomPath`** / **`-CopyTools`** as needed; script refuses **`text_offset`/`text_size` = `0x0`** unless **`-SkipOffsetGuard`**).
+5. **CMake (`lib/Zelda64Recomp/CMakeLists.txt`):** `SOURCES` always lists **`rsp/aspMain.cpp`** and **`rsp/njpgdspMain.cpp`**. Only when **`_AERO_PATCH_RSP_STUBS`** is **ON** does CMake remove those paths and link **`tools/phase6_no_mm_engine/rsp_*_stub.cpp`** if either generated file is missing; if **both** **`rsp/*.cpp`** exist, real RSP is linked even in stub patch mode. When **`_AERO_PATCH_RSP_STUBS`** is **OFF** (stock MM configure, or **`AEROASSAULT64_AFA_PRODUCT` + `AEROASSAULT64_AFA_RETAIL_PIPELINES`** without **`NO_MM_ROM`**), that substitution block does not run — **both** **`rsp/*.cpp`** must be present or the build fails. See:
+
+```304:320:lib/Zelda64Recomp/CMakeLists.txt
+if(_AERO_PATCH_RSP_STUBS)
+    set(_AERO_RSP_ASP "${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp")
+    set(_AERO_RSP_NJPG "${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp")
+    if(EXISTS "${_AERO_RSP_ASP}" AND EXISTS "${_AERO_RSP_NJPG}")
+        message(STATUS "Aero stub mode: found rsp/aspMain.cpp and rsp/njpgdspMain.cpp — linking RSPRecomp output (stubs skipped). See BUILDING.md section 4.")
+    else()
+        list(REMOVE_ITEM SOURCES
+            ${_AERO_RSP_ASP}
+            ${_AERO_RSP_NJPG}
+        )
+        list(APPEND SOURCES
+            ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
+            ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
+        )
+        message(STATUS "Aero stub mode: RSP stubs (missing rsp/*.cpp). For AFA, add RSPRecomp outputs or keep stubs; see config/afa_rsp/README.txt.")
+    endif()
+endif()
+```
 
 ### 2. Patches (`patches/patches.elf` → `N64Recomp patches.toml` → `RecompiledPatches/`)
 
