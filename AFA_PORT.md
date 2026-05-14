@@ -6,7 +6,9 @@ This file backs the **Docs/Workflow.md** checklist row *AFA fork — full retail
 
 ### 1. RSP (RSPRecomp → `rsp/*.cpp`)
 
-1. From **Ghidra + splat / ROM**, fill **`text_offset`**, **`text_size`**, **`text_address`** in the repo templates:
+**Splat vs RSPRecomp:** **`config/splat.yaml`** and **`Docs/Workflow.md`** (Phase 2–3) document **MIPS** layout — **`ipl3`**, **`entry`**, **`main`**, **`data`**, **`rodata`**, **`bss`** in **`roms/afa.n64.us.z64`**. **RSPRecomp** needs a **different** triple per microcode: **`text_offset`** and **`text_size`** are the **file byte offset and length of that microcode’s text in the same cart ROM** named by **`rom_file_path`**. Splat does **not** output those fields; you derive them from ROM/Ghidra (e.g. following where the game loads **F3D / JPEG** RSP text into IMEM). **`config/afa_rsp/*.template.toml` in git still use `0x0` for offset/size** until someone commits the real numbers (from your analysis) into those files or into engine-root **`aspMain.afa.us.toml`** / **`njpgdspMain.afa.us.toml`**.
+
+1. Fill **`text_offset`**, **`text_size`**, **`text_address`** (and **`extra_indirect_branch_targets`** for **aspMain** when you have them — compare upstream [aspMain.us.rev1.toml](https://raw.githubusercontent.com/Mr-Wiseguy/Zelda64Recomp/master/aspMain.us.rev1.toml)) in:
    - **`../../config/afa_rsp/aspMain.afa.us.template.toml`**
    - **`../../config/afa_rsp/njpgdspMain.afa.us.template.toml`**
 2. Copy the filled files into **`lib/Zelda64Recomp/`** (engine root), e.g. **`aspMain.afa.us.toml`**, **`njpgdspMain.afa.us.toml`**.
