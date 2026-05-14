@@ -1,10 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 
+# MSVC: default to /MD and /MDd so all targets share the DLL C runtime. Prevents LNK4098 when some
+# static libraries default to /MT (LIBCMT) while the exe and SDL2 VC imports use /MD (MSVCRT).
+if (POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+
 if (APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version")
 endif()
 
 project(Zelda64Recompiled LANGUAGES C CXX)
+
+if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,17 +79,58 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM patch pipeline)" OFF)
 set(AEROASSAULT64_STUB_DIR "${CMAKE_SOURCE_DIR}/../../tools/phase6_no_mm_engine")
 
+# AeroAssault64 fork: optional second GameEntry for AFA USA + branding (see cmake/aero_build_config.h.in, Docs/Workflow.md).
+set(AEROASSAULT64_AFA_ROM_XXH3_HEX "" CACHE STRING
+    "USA retail ROM full-file XXH3-64 as 16 hex digits (same algorithm as librecomp recomp.cpp). Optional; or use repo config/.afa_usa_rom_xxh3 — tools/compute_aero_rom_xxh3.py.")
+set(AEROASSAULT64_EXE_OUTPUT_NAME "" CACHE STRING
+    "If non-empty, CMake OUTPUT_NAME for the game executable (MSVC still builds target Zelda64Recompiled).")
+set(AEROASSAULT64_VERSION_TAG "1.2.2+aeroassault64" CACHE STRING "Version string for recomp::Version (must contain two dots before optional suffix).")
+set(AEROASSAULT64_WINDOW_TITLE "Aero Assault 64 (recomp bring-up)" CACHE STRING "SDL_CreateWindow title string.")
+
+set(_AFA_XXH3 "${AEROASSAULT64_AFA_ROM_XXH3_HEX}")
+if(NOT _AFA_XXH3)
+    set(_AFA_XXH3_FILE "${CMAKE_SOURCE_DIR}/../../config/.afa_usa_rom_xxh3")
+    if(EXISTS "${_AFA_XXH3_FILE}")
+        file(STRINGS "${_AFA_XXH3_FILE}" _AFA_XXH3 LIMIT_COUNT 1)
+        string(STRIP "${_AFA_XXH3}" _AFA_XXH3)
+    endif()
+endif()
+set(AEROASSAULT64_WITH_AFA_USA 0)
+set(AFA_USA_ROM_XXH3_LITERAL "0")
+if(_AFA_XXH3)
+    string(REGEX REPLACE "^0[xX]" "" _AFA_XXH3 "${_AFA_XXH3}")
+    string(TOLOWER "${_AFA_XXH3}" _AFA_XXH3)
+    string(LENGTH "${_AFA_XXH3}" _afa_hex_len)
+    # CMake regex does not reliably support {16} — validate length + hex charset.
+    if(_afa_hex_len EQUAL 16 AND _AFA_XXH3 MATCHES "^[0-9a-f]+$")
+        set(AEROASSAULT64_WITH_AFA_USA 1)
+        # UINT64_C(...) in aero_build_config.h.in adds the width suffix — do not append "ull" here.
+        set(AFA_USA_ROM_XXH3_LITERAL "0x${_AFA_XXH3}")
+    else()
+        message(WARNING "AFA USA XXH3 must be exactly 16 hex digits (after optional 0x). Got len=${_afa_hex_len} value='${_AFA_XXH3}'. Omitting AFA GameEntry.")
+    endif()
+endif()
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/aero_build_config.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/aero_build_config.h"
+    @ONLY
+)
+
 target_include_directories(rt64 PRIVATE ${CMAKE_BINARY_DIR}/rt64/src)
 
 # RecompiledFuncs - Library containing the primary recompiler output
 add_library(RecompiledFuncs STATIC)
 
-target_compile_options(RecompiledFuncs PRIVATE
-    # -Wno-unused-but-set-variable
-    -fno-strict-aliasing
-    -Wno-unused-variable
-    -Wno-implicit-function-declaration
-)
+if(MSVC)
+    # cl.exe rejects GCC warning/aliasing flags (e.g. D8021 on -Wno-*).
+else()
+    target_compile_options(RecompiledFuncs PRIVATE
+        -fno-strict-aliasing
+        -Wno-unused-variable
+        -Wno-implicit-function-declaration
+    )
+endif()
 
 target_include_directories(RecompiledFuncs PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -98,12 +150,14 @@ target_compile_definitions(RecompiledFuncs PRIVATE main=recomp_rom_main)
 # PatchesLib - Library containing the recompiled output for any custom function patches
 add_library(PatchesLib STATIC)
 
-target_compile_options(PatchesLib PRIVATE
-    # -Wno-unused-but-set-variable
-    -fno-strict-aliasing
-    -Wno-unused-variable
-    -Wno-implicit-function-declaration
-)
+if(MSVC)
+else()
+    target_compile_options(PatchesLib PRIVATE
+        -fno-strict-aliasing
+        -Wno-unused-variable
+        -Wno-implicit-function-declaration
+    )
+endif()
 
 target_include_directories(PatchesLib PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -124,7 +178,9 @@ else()
         ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
     )
 
-    set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
+    if(NOT MSVC)
+        set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
+    endif()
 
     # Build patches elf
     if(NOT DEFINED PATCHES_C_COMPILER)
@@ -220,14 +276,21 @@ set (SOURCES
 )
 
 if(AEROASSAULT64_NO_MM_ROM)
-    list(REMOVE_ITEM SOURCES
-        ${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp
-        ${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp
-    )
-    list(APPEND SOURCES
-        ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
-        ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
-    )
+    set(_AERO_RSP_ASP "${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp")
+    set(_AERO_RSP_NJPG "${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp")
+    if(EXISTS "${_AERO_RSP_ASP}" AND EXISTS "${_AERO_RSP_NJPG}")
+        message(STATUS "AEROASSAULT64_NO_MM_ROM: found rsp/aspMain.cpp and rsp/njpgdspMain.cpp — linking RSPRecomp output (stubs skipped). See BUILDING.md §4.")
+    else()
+        list(REMOVE_ITEM SOURCES
+            ${_AERO_RSP_ASP}
+            ${_AERO_RSP_NJPG}
+        )
+        list(APPEND SOURCES
+            ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
+            ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
+        )
+        message(STATUS "AEROASSAULT64_NO_MM_ROM: RSP stubs (missing rsp/*.cpp). Generate with RSPRecomp per BUILDING.md §4 or copy PEs to engine root.")
+    endif()
 endif()
 
 if (APPLE)
@@ -254,7 +317,9 @@ target_include_directories(Zelda64Recompiled PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
+if(MSVC)
+    # GNU-only flags below (-march, -fms-extensions) are rejected by cl.exe.
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
     target_compile_options(Zelda64Recompiled PRIVATE
         -march=nehalem
         -fno-strict-aliasing
@@ -390,6 +455,15 @@ target_link_libraries(Zelda64Recompiled PRIVATE
     lunasvg
 )
 
+# MSVC LNK4098: some third-party static .libs still advertise defaultlib LIBCMT (/MT) while this
+# executable and the rest of the tree use MultiThreadedDLL (/MD) via CMAKE_MSVC_RUNTIME_LIBRARY.
+# Drop LIBCMT for non-Debug configs so the link resolves to MSVCRT only (MSVC linker guidance for 4098).
+if(MSVC)
+    target_link_options(Zelda64Recompiled PRIVATE
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:/NODEFAULTLIB:LIBCMT>
+    )
+endif()
+
 # TODO fix the rt64 CMake script so that this doesn't need to be duplicated here
 # For DXC
 set (DXC_COMMON_OPTS "-I${PROJECT_SOURCE_DIR}/src")
@@ -448,7 +522,19 @@ target_sources(Zelda64Recompiled PRIVATE ${GENERATED_NRM_SOURCES})
 
 target_sources(Zelda64Recompiled PRIVATE ${SOURCES})
 
-# N64Recomp funcs.h declares the game entry as `main`; C++ rejects `void ::main` when this header is pulled into .cpp (register_overlays.cpp).
-target_compile_definitions(Zelda64Recompiled PRIVATE main=recomp_rom_main)
+# N64Recomp funcs.h declares the game entry as `main`; C++ rejects `void ::main` when that header is pulled into
+# register_*.cpp. Do NOT set `main=recomp_rom_main` on the whole executable: it renames `int main` in
+# src/main/main.cpp and breaks the CRT/SDL entry (LNK2019 SDL_main, etc.). Apply only where needed.
+set(ZELDA64_REGISTER_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/main/register_overlays.cpp
+    ${CMAKE_SOURCE_DIR}/src/main/register_patches.cpp
+)
+set_source_files_properties(${ZELDA64_REGISTER_SOURCES} PROPERTIES
+    COMPILE_DEFINITIONS main=recomp_rom_main
+)
+
+if(AEROASSAULT64_EXE_OUTPUT_NAME)
+    set_target_properties(Zelda64Recompiled PROPERTIES OUTPUT_NAME "${AEROASSAULT64_EXE_OUTPUT_NAME}")
+endif()
 
 set_property(TARGET Zelda64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

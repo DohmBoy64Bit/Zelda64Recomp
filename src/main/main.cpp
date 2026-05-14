@@ -40,6 +40,8 @@
 #include "librecomp/mods.hpp"
 #include "librecomp/helpers.hpp"
 
+#include "aero_build_config.h"
+
 #include "../../patches/graphics.h"
 #include "../../patches/input.h"
 #include "../../patches/sound.h"
@@ -56,7 +58,7 @@
 
 #include "../../lib/rt64/src/contrib/stb/stb_image.h"
 
-const std::string version_string = "1.2.2";
+const std::string version_string = AEROASSAULT64_VERSION_TAG;
 
 template<typename... Ts>
 void exit_error(const char* str, Ts ...args) {
@@ -144,7 +146,7 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     flags |= SDL_WINDOW_VULKAN;
 #endif
 
-    window = SDL_CreateWindow("Zelda 64: Recompiled", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1600, 960,  flags);
+    window = SDL_CreateWindow(AEROASSAULT64_SDL_WINDOW_TITLE, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1600, 960,  flags);
 #if defined(__linux__)
     SetImageAsIcon("icons/512.png",window);
     if (ultramodern::renderer::get_graphics_config().wm_option == ultramodern::renderer::WindowMode::Fullscreen) { // TODO: Remove once RT64 gets native fullscreen support on Linux
@@ -347,9 +349,11 @@ RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
 extern "C" void recomp_entrypoint(uint8_t * rdram, recomp_context * ctx);
 gpr get_entrypoint_address();
 
-// array of supported GameEntry objects
-std::vector<recomp::GameEntry> supported_games = {
-    {
+namespace {
+
+std::vector<recomp::GameEntry> make_supported_games() {
+    std::vector<recomp::GameEntry> games;
+    games.push_back({
         .rom_hash = 0xEF18B4A9E2386169ULL,
         .internal_name = "ZELDA MAJORA'S MASK",
         .game_id = u8"mm.n64.us.1.0",
@@ -360,8 +364,28 @@ std::vector<recomp::GameEntry> supported_games = {
         .has_compressed_code = true,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
-    },
-};
+    });
+#if AEROASSAULT64_WITH_AFA_USA
+    // Title @ ROM 0x20 — 20-byte cart name (see Docs/Workflow.md § Phase 2 / tools/ghidra/Phase2_Closeout_Report.py).
+    games.push_back({
+        .rom_hash = AEROASSAULT64_AFA_USA_ROM_XXH3_VALUE,
+        .internal_name = "AERO FIGHTERS ASSAUL",
+        .game_id = u8"afa.n64.us.1.0",
+        .mod_game_id = "afa",
+        .save_type = recomp::SaveType::AllowAll,
+        .is_enabled = false,
+        .decompression_routine = nullptr,
+        .has_compressed_code = false,
+        .entrypoint_address = get_entrypoint_address(),
+        .entrypoint = recomp_entrypoint,
+    });
+#endif
+    return games;
+}
+
+} // namespace
+
+std::vector<recomp::GameEntry> supported_games = make_supported_games();
 
 // TODO: move somewhere else
 namespace zelda64 {
