@@ -77,7 +77,15 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 # AeroAssault64: skip MM patches.elf / N64Recomp patches.toml; use repo-root tools/phase6_no_mm_engine stubs.
 # Prereq: run tools/phase6_materialize_no_mm_engine_files.ps1 from AeroAssault64 repo root (installs RecompiledPatches/*.h + recomp_overlays.inl).
 option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM patch pipeline)" OFF)
+# AFA retail bring-up without MM patches.elf / patches.toml: same PatchesLib + RSP stub strategy as NO_MM_ROM
+# when rsp/*.cpp are absent, but intended for AFA N64Recomp (config/aerofighters_assault.n64recomp.toml) with NO_MM_ROM OFF.
+option(AEROASSAULT64_AFA_PRODUCT "Stub engine PatchesLib + RSP (if rsp/*.cpp missing); skips MM N64Recomp patches.toml pipeline" OFF)
 set(AEROASSAULT64_STUB_DIR "${CMAKE_SOURCE_DIR}/../../tools/phase6_no_mm_engine")
+
+set(_AERO_PATCH_RSP_STUBS OFF)
+if(AEROASSAULT64_NO_MM_ROM OR AEROASSAULT64_AFA_PRODUCT)
+    set(_AERO_PATCH_RSP_STUBS ON)
+endif()
 
 # AeroAssault64 fork: optional second GameEntry for AFA USA + branding (see cmake/aero_build_config.h.in, Docs/Workflow.md).
 set(AEROASSAULT64_AFA_ROM_XXH3_HEX "" CACHE STRING
@@ -166,12 +174,15 @@ target_include_directories(PatchesLib PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime/N64Recomp/include
 )
 
-if(AEROASSAULT64_NO_MM_ROM)
+if(_AERO_PATCH_RSP_STUBS)
     target_include_directories(PatchesLib PRIVATE ${CMAKE_SOURCE_DIR}/RecompiledPatches)
     target_sources(PatchesLib PRIVATE
         ${AEROASSAULT64_STUB_DIR}/patches_stub.c
         ${AEROASSAULT64_STUB_DIR}/patches_bin_stub.c
     )
+    if(AEROASSAULT64_AFA_PRODUCT AND NOT AEROASSAULT64_NO_MM_ROM)
+        message(STATUS "AEROASSAULT64_AFA_PRODUCT: PatchesLib uses phase6_no_mm_engine stubs (no lib/Zelda64Recomp/patches.elf pipeline). Run tools/phase6_materialize_no_mm_engine_files.ps1 for RecompiledPatches/*.h.")
+    endif()
 else()
     target_sources(PatchesLib PRIVATE
         ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c
@@ -275,11 +286,11 @@ set (SOURCES
     ${CMAKE_SOURCE_DIR}/lib/RmlUi/Backends/RmlUi_Platform_SDL.cpp
 )
 
-if(AEROASSAULT64_NO_MM_ROM)
+if(_AERO_PATCH_RSP_STUBS)
     set(_AERO_RSP_ASP "${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp")
     set(_AERO_RSP_NJPG "${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp")
     if(EXISTS "${_AERO_RSP_ASP}" AND EXISTS "${_AERO_RSP_NJPG}")
-        message(STATUS "AEROASSAULT64_NO_MM_ROM: found rsp/aspMain.cpp and rsp/njpgdspMain.cpp — linking RSPRecomp output (stubs skipped). See BUILDING.md §4.")
+        message(STATUS "Aero stub mode: found rsp/aspMain.cpp and rsp/njpgdspMain.cpp — linking RSPRecomp output (stubs skipped). See BUILDING.md section 4.")
     else()
         list(REMOVE_ITEM SOURCES
             ${_AERO_RSP_ASP}
@@ -289,7 +300,7 @@ if(AEROASSAULT64_NO_MM_ROM)
             ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
             ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
         )
-        message(STATUS "AEROASSAULT64_NO_MM_ROM: RSP stubs (missing rsp/*.cpp). Generate with RSPRecomp per BUILDING.md §4 or copy PEs to engine root.")
+        message(STATUS "Aero stub mode: RSP stubs (missing rsp/*.cpp). For AFA, add RSPRecomp outputs or keep stubs; see config/afa_rsp/README.txt.")
     endif()
 endif()
 

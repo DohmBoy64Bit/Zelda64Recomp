@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdio>
 
 #include "recomp.h"
 #include "librecomp/overlays.hpp"
@@ -13,6 +14,19 @@
 #include "../patches/sound.h"
 #include "ultramodern/ultramodern.hpp"
 #include "ultramodern/config.hpp"
+
+#include "aero_build_config.h"
+
+#if AEROASSAULT64_AFA_PRODUCT
+namespace {
+struct AfaProductBuildNote {
+    AfaProductBuildNote() {
+        // stderr so it is visible under MSVC GUI runs; documents CMake AEROASSAULT64_AFA_PRODUCT (Docs/Workflow.md).
+        std::fprintf(stderr, "[AeroAssault64] AEROASSAULT64_AFA_PRODUCT: stub PatchesLib / RSP path; CPU from AFA N64Recomp TOML.\n");
+    }
+} s_afa_product_build_note;
+} // namespace
+#endif
 
 extern "C" void recomp_update_inputs(uint8_t* rdram, recomp_context* ctx) {
     recomp::poll_inputs();
