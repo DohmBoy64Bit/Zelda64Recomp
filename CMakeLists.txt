@@ -436,4 +436,7 @@ target_sources(Zelda64Recompiled PRIVATE ${GENERATED_NRM_SOURCES})
 
 target_sources(Zelda64Recompiled PRIVATE ${SOURCES})
 
+# N64Recomp funcs.h declares the game entry as `main`; C++ rejects `void ::main` when this header is pulled into .cpp (register_overlays.cpp).
+target_compile_definitions(Zelda64Recompiled PRIVATE main=recomp_rom_main)
+
 set_property(TARGET Zelda64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
