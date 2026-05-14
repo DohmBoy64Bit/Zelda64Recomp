@@ -63,6 +63,11 @@ target_compile_definitions(rmlui_core PRIVATE LUNASVG_BUILD_STATIC)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 
+# AeroAssault64: skip MM patches.elf / N64Recomp patches.toml; use repo-root tools/phase6_no_mm_engine stubs.
+# Prereq: run tools/phase6_materialize_no_mm_engine_files.ps1 from AeroAssault64 repo root (installs RecompiledPatches/*.h + recomp_overlays.inl).
+option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM patch pipeline)" OFF)
+set(AEROASSAULT64_STUB_DIR "${CMAKE_SOURCE_DIR}/../../tools/phase6_no_mm_engine")
+
 target_include_directories(rt64 PRIVATE ${CMAKE_BINARY_DIR}/rt64/src)
 
 # RecompiledFuncs - Library containing the primary recompiler output
@@ -104,45 +109,53 @@ target_include_directories(PatchesLib PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime/N64Recomp/include
 )
 
-target_sources(PatchesLib PRIVATE
-    ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c
-    ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
-)
+if(AEROASSAULT64_NO_MM_ROM)
+    target_include_directories(PatchesLib PRIVATE ${CMAKE_SOURCE_DIR}/RecompiledPatches)
+    target_sources(PatchesLib PRIVATE
+        ${AEROASSAULT64_STUB_DIR}/patches_stub.c
+        ${AEROASSAULT64_STUB_DIR}/patches_bin_stub.c
+    )
+else()
+    target_sources(PatchesLib PRIVATE
+        ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c
+        ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
+    )
 
-set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
 
-# Build patches elf
-if(NOT DEFINED PATCHES_C_COMPILER)
-    set(PATCHES_C_COMPILER clang)
+    # Build patches elf
+    if(NOT DEFINED PATCHES_C_COMPILER)
+        set(PATCHES_C_COMPILER clang)
+    endif()
+
+    if(NOT DEFINED PATCHES_LD)
+        set(PATCHES_LD ld.lld)
+    endif()
+
+    add_custom_target(PatchesBin
+        COMMAND ${CMAKE_COMMAND} -E env CC=${PATCHES_C_COMPILER} LD=${PATCHES_LD} make
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/patches
+        BYPRODUCTS ${CMAKE_SOURCE_DIR}/patches/patches.elf
+    )
+
+    # Generate patches_bin.c from patches.bin
+    add_custom_command(OUTPUT ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
+        COMMAND file_to_c ${CMAKE_SOURCE_DIR}/patches/patches.bin mm_patches_bin ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.h
+        DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.bin
+    )
+
+    # Recompile patches elf into patches.c and patches.bin
+    add_custom_command(OUTPUT
+                           ${CMAKE_SOURCE_DIR}/patches/patches.bin
+                           ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c
+                           ${CMAKE_SOURCE_DIR}/RecompiledPatches/recomp_overlays.inl
+                           ${CMAKE_SOURCE_DIR}/RecompiledPatches/funcs.h
+                       # TODO: Look into why modifying patches requires two builds to take
+                       COMMAND ./N64Recomp patches.toml
+                       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                       DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.elf
+    )
 endif()
-
-if(NOT DEFINED PATCHES_LD)
-    set(PATCHES_LD ld.lld)
-endif()
-
-add_custom_target(PatchesBin
-    COMMAND ${CMAKE_COMMAND} -E env CC=${PATCHES_C_COMPILER} LD=${PATCHES_LD} make
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/patches
-    BYPRODUCTS ${CMAKE_SOURCE_DIR}/patches/patches.elf
-)
-
-# Generate patches_bin.c from patches.bin
-add_custom_command(OUTPUT ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
-    COMMAND file_to_c ${CMAKE_SOURCE_DIR}/patches/patches.bin mm_patches_bin ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.h
-    DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.bin
-)
-
-# Recompile patches elf into patches.c and patches.bin
-add_custom_command(OUTPUT
-                       ${CMAKE_SOURCE_DIR}/patches/patches.bin
-                       ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c
-                       ${CMAKE_SOURCE_DIR}/RecompiledPatches/recomp_overlays.inl
-                       ${CMAKE_SOURCE_DIR}/RecompiledPatches/funcs.h
-                   # TODO: Look into why modifying patches requires two builds to take
-                   COMMAND ./N64Recomp patches.toml
-                   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                   DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.elf
-)
 
 # Main executable
 add_executable(Zelda64Recompiled)
@@ -202,6 +215,17 @@ set (SOURCES
 
     ${CMAKE_SOURCE_DIR}/lib/RmlUi/Backends/RmlUi_Platform_SDL.cpp
 )
+
+if(AEROASSAULT64_NO_MM_ROM)
+    list(REMOVE_ITEM SOURCES
+        ${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp
+        ${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp
+    )
+    list(APPEND SOURCES
+        ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
+        ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
+    )
+endif()
 
 if (APPLE)
     list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/main/support_apple.mm)
