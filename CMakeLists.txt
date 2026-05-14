@@ -308,17 +308,29 @@ if (WIN32)
             "${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/dxc/bin/x64/dxcompiler.dll"
             $<TARGET_FILE_DIR:Zelda64Recompiled>)
 
-    set_target_properties(
-        Zelda64Recompiled
-        PROPERTIES
-            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
-            LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
-            LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
-            LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
-    )
+    if(MSVC)
+        set_target_properties(
+            Zelda64Recompiled
+            PROPERTIES
+                LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+                LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+                LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+                LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+        )
+    elseif(MINGW)
+        # GNU ld does not accept MSVC /SUBSYSTEM flags; use MinGW entry/subsystem switches instead.
+        target_link_options(Zelda64Recompiled PRIVATE
+            $<$<CONFIG:Debug>:-mconsole>
+            $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:-mwindows>
+        )
+    endif()
 
     target_sources(Zelda64Recompiled PRIVATE ${CMAKE_SOURCE_DIR}/icons/app.rc)
-    target_link_libraries(Zelda64Recompiled PRIVATE SDL2 Winmm.lib)
+    if(MSVC)
+        target_link_libraries(Zelda64Recompiled PRIVATE SDL2 Winmm.lib)
+    else()
+        target_link_libraries(Zelda64Recompiled PRIVATE SDL2 winmm)
+    endif()
 endif()
 
 if (APPLE)
