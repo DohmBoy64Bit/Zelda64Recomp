@@ -33,7 +33,7 @@ static gpr afa_vaddr(uint32_t vaddr) {
 }
 
 // N64Recomp datasyms.toml maps game VRAM into the 0x80A0/0x8027 band — full pin list: AFA_PORT.md § datasyms.
-// Entire OS globals slab: game 0x80251680.. was emitted as 0x809F9960.. (constant +0x9E32E0 slip).
+// Entire OS globals slab: game 0x80251680.. was emitted as 0x809F9960.. (constant +0x7A82E0 slip).
 static gpr afa_fixup_datasyms_809f99xx(gpr p) {
     constexpr uint32_t k_wrong_base = 0x809F9960u;
     constexpr uint32_t k_right_base = 0x80251680u;

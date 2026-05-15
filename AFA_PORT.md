@@ -100,9 +100,17 @@ Wrong **data** VRAM in **`lib/Zelda64Recomp/Zelda64RecompSyms/afa.n64.us.datasym
 | `main_BSS_START` | `0x80256D70` | `0x809FF050` | Entry BSS clear targets wrong RAM (**`asm/1000.s`**) |
 | `D_80282B60` | `0x80282B60` | `0x80276E90` | Entry stack pointer before `main` |
 | `D_80251A70` | `0x80251A70` | `0x809F9D50` | Message-queue head (`.word D_80285F40` — **`asm/data/4C050.data.s`**); **`func_80247090`** AV |
-| *(slab)* | `0x80251680`–`~0x80251E80` | `0x809F9960`–`~0x809F9E60` | **+0x9E32E0** on every symbol in this block (`D_80251774`, …); **`func_802420E0`** AV / bogus **`rdram`** in VS |
+| *(slab)* | `0x80251680`–`~0x80251E80` | `0x809F9960`–`~0x809F9E60` | **+0x7A82E0** on every symbol in this block (`D_80251774`, …); **`func_802420E0`** AV / bogus **`rdram`** in VS |
 
-Until syms are fixed, **`afa_game_hooks.cpp`** applies **`afa_fixup_datasyms_809f99xx()`** for that slab, host stubs for **`recomp_entrypoint`**, **`func_80247090`**, **`func_802420E0`**, and scheduler helpers. **`recomp_entrypoint`** mirrors **`asm/1000.s`** and calls **`func_80241F54`** after **`main`** returns (**`asm/31B30.s`**) so the game thread does not exit with a black window.
+**Durable pipeline (repo root, after `build/aerofighters_assault.elf` exists):**
+
+1. **`pwsh tools/phase6_afa_generate_syms.ps1`** — `N64Recomp --dump-context` then **`tools/afa_fixup_datasyms_vram.py`** (rewrites **`Zelda64RecompSyms/afa.n64.us.datasyms*.toml`** `vram` from symbol names like **`D_802516D8`**).
+2. **`pwsh tools/phase5_run_aero_n64recomp.ps1`** — CPU recomp, then **`tools/afa_fixup_recompiled_vram.py`** (fixes **`lui 0x80A0` / `lw -0x65AC`** style slips in **`RecompiledFuncs/*.c`**).
+3. Rebuild engine (**`cmake --build … --target Zelda64Recompiled`**).
+
+Host stubs in **`afa_game_hooks.cpp`** remain for MMIO (**`func_8023E3A0`**, SI **`0xA440`**, cart PIO) until those paths are ported; scheduler/entrypoint stubs can be trimmed after verifying a clean boot on regenerated **`RecompiledFuncs`**.
+
+Long-term ELF fix: reconcile splat **`main`** BSS VMA (**`config/splat.yaml`**, **`Docs/Workflow.md` Phase 3**) so the linked ELF stops emitting the **`0x809F99xx`** band; then steps 1–2 should become no-ops.
 
 ## In-tree progress (this fork)
 
