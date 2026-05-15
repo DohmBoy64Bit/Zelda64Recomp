@@ -1,0 +1,18 @@
+# RSPRecomp template for Aero Fighters Assault (USA) — njpegdsp ucode.
+# Values below match repo **`roms/afa.n64.us.z64`** (see comments). Re-derive with **`tools/rsprecomp_*.py`** if needed.
+# Schema matches upstream MM file:
+#   https://raw.githubusercontent.com/Mr-Wiseguy/Zelda64Recomp/master/njpgdspMain.us.rev1.toml
+#
+# Typical workflow: copy to lib/Zelda64Recomp/njpgdspMain.afa.us.toml; run ./RSPRecomp.exe njpgdspMain.afa.us.toml
+# from engine root; output rsp/njpgdspMain.cpp. Or: pwsh ../../tools/phase6_rsprecomp_afa.ps1 from repo root.
+
+# tools/rsprecomp_fine_njpg.py: disjoint from asp [0x4DAB0,0x4EAB0); size 0xAF0 per upstream njpgdspMain.us.rev1.toml;
+# among inv=0 windows, max switch "case" count plateau ~0x4C830–0x4C940 (picked 0x4C830).
+text_offset = 0x4C830
+text_size = 0xAF0
+text_address = 0x04001080
+rom_file_path = "afa.n64.us.z64"
+output_file_path = "rsp/njpgdspMain.cpp"
+output_function_name = "njpgdspMain"
+# 0x1000 / 0x1B70 exceed text_size 0xAF0 — listing them only adds switch cases without labels.
+extra_indirect_branch_targets = [0x768, 0xE48]

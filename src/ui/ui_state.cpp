@@ -1017,3 +1017,6 @@ void recompui::drop_files(const std::list<std::filesystem::path> &file_list) {
         );
     }
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(ui_state);

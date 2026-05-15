@@ -235,3 +235,6 @@ extern "C" void recomp_get_actor_spawn_index(uint8_t* rdram, recomp_context* ctx
     _return<u32>(ctx, data->actor_spawn_index);
 }
 
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(recomp_actor_api);
+

@@ -40,8 +40,64 @@
 #include "librecomp/game.hpp"
 #include "librecomp/mods.hpp"
 #include "librecomp/helpers.hpp"
+#include "librecomp/boot_log.hpp"
 
 #include "aero_build_config.h"
+
+#if AEROASSAULT64_AFA_PRODUCT
+static FILE* g_aero_boot_log = nullptr;
+
+#define AERO_BOOT_TRACE(msg) \
+    do { \
+        std::fprintf(stderr, "[AeroAssault64 boot] %s\n", (msg)); \
+        std::fflush(stderr); \
+        if (g_aero_boot_log) { \
+            std::fprintf(g_aero_boot_log, "[AeroAssault64 boot] %s\n", (msg)); \
+            std::fflush(g_aero_boot_log); \
+        } \
+        recomp_boot_log("[AeroAssault64 boot] " msg); \
+    } while (0)
+#else
+#define AERO_BOOT_TRACE(msg) ((void)0)
+#endif
+
+#if AEROASSAULT64_AFA_PRODUCT
+static bool g_aero_auto_start = false;
+static bool g_aero_auto_start_done = false;
+static bool g_aero_pause_on_exit = false;
+
+#ifdef _WIN32
+static LONG WINAPI aero_unhandled_exception_filter(EXCEPTION_POINTERS* info) {
+    const uintptr_t image_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t fault = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    const uintptr_t rva = fault - image_base;
+    recomp_boot_logf("[boot] UNHANDLED EXCEPTION code=0x%08lX at %p (exe+0x%llX, base=%p, tid=%lu)",
+        info->ExceptionRecord->ExceptionCode,
+        info->ExceptionRecord->ExceptionAddress,
+        static_cast<unsigned long long>(rva),
+        reinterpret_cast<void*>(image_base),
+        GetCurrentThreadId());
+    std::fprintf(stderr, "[AeroAssault64 boot] UNHANDLED EXCEPTION code=0x%08lX at %p (exe+0x%llX)\n",
+        info->ExceptionRecord->ExceptionCode,
+        info->ExceptionRecord->ExceptionAddress,
+        static_cast<unsigned long long>(rva));
+    std::fflush(stderr);
+    if (g_aero_boot_log) {
+        std::fprintf(g_aero_boot_log,
+            "[AeroAssault64 boot] UNHANDLED EXCEPTION code=0x%08lX at %p (exe+0x%llX)\n",
+            info->ExceptionRecord->ExceptionCode,
+            info->ExceptionRecord->ExceptionAddress,
+            static_cast<unsigned long long>(rva));
+        std::fflush(g_aero_boot_log);
+    }
+    if (g_aero_pause_on_exit) {
+        std::fprintf(stderr, "Press Enter to close...\n");
+        std::getchar();
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+#endif
 
 #include "../../patches/graphics.h"
 #include "../../patches/input.h"
@@ -178,6 +234,15 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
 }
 
 void update_gfx(void*) {
+#if AEROASSAULT64_AFA_PRODUCT
+    std::u8string auto_start_id = zelda64::primary_supported_game_id();
+    if (g_aero_auto_start && !g_aero_auto_start_done && recomp::is_rom_valid(auto_start_id)) {
+        g_aero_auto_start_done = true;
+        AERO_BOOT_TRACE("auto-start: calling start_game");
+        recomp::start_game(zelda64::primary_supported_game_id());
+        AERO_BOOT_TRACE("auto-start: start_game returned");
+    }
+#endif
     recomp::handle_events();
 }
 
@@ -350,6 +415,12 @@ RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
 extern "C" void recomp_entrypoint(uint8_t * rdram, recomp_context * ctx);
 gpr get_entrypoint_address();
 
+#if AEROASSAULT64_AFA_RETAIL_PIPELINES
+namespace zelda64 {
+void afa_on_init_after_overlays(uint8_t* rdram, recomp_context* ctx);
+}
+#endif
+
 namespace {
 
 std::vector<recomp::GameEntry> make_supported_games() {
@@ -378,6 +449,9 @@ std::vector<recomp::GameEntry> make_supported_games() {
         .has_compressed_code = false,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
+#if AEROASSAULT64_AFA_RETAIL_PIPELINES
+        .on_init_callback = zelda64::afa_on_init_after_overlays,
+#endif
     };
 #endif
     std::vector<recomp::GameEntry> games;
@@ -396,7 +470,30 @@ std::vector<recomp::GameEntry> make_supported_games() {
 
 } // namespace
 
+#if AEROASSAULT64_AFA_PRODUCT
+namespace {
+struct AeroBootMainTuInit {
+    AeroBootMainTuInit() {
+        AERO_BOOT_TRACE("main.cpp TU: before supported_games");
+    }
+};
+AeroBootMainTuInit s_aero_boot_main_tu_init;
+
+struct AeroBootAfterGamesInit {
+    AeroBootAfterGamesInit() {
+        AERO_BOOT_TRACE("main.cpp TU: after supported_games");
+    }
+};
+} // namespace
+#endif
+
 std::vector<recomp::GameEntry> supported_games = make_supported_games();
+
+#if AEROASSAULT64_AFA_PRODUCT
+namespace {
+AeroBootAfterGamesInit s_aero_boot_after_games_init;
+} // namespace
+#endif
 
 // TODO: move somewhere else
 namespace zelda64 {
@@ -609,8 +706,31 @@ void reorder_texture_pack(recomp::mods::ModContext&) {
 #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
 
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+#if AEROASSAULT64_AFA_PRODUCT
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--boot-log") == 0) {
+            const char* log_path = "aero_boot.log";
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                log_path = argv[++i];
+            }
+            g_aero_boot_log = std::fopen(log_path, "w");
+            if (g_aero_boot_log) {
+                std::freopen(log_path, "a", stderr);
+                std::setvbuf(stderr, nullptr, _IONBF, 0);
+            }
+        } else if (strcmp(argv[i], "--pause-on-exit") == 0) {
+            g_aero_pause_on_exit = true;
+        } else if (strcmp(argv[i], "--auto-start") == 0) {
+            g_aero_auto_start = true;
+        }
+    }
+#ifdef _WIN32
+    if (g_aero_boot_log || g_aero_pause_on_exit) {
+        SetUnhandledExceptionFilter(aero_unhandled_exception_filter);
+    }
+#endif
+#endif
+    AERO_BOOT_TRACE("main: enter");
     recomp::Version project_version{};
     if (!recomp::Version::from_string(version_string, project_version)) {
         ultramodern::error_handling::message_box(("Invalid version string: " + version_string).c_str());
@@ -620,32 +740,47 @@ int main(int argc, char** argv) {
     // Map this executable into memory and lock it, which should keep it in physical memory. This ensures
     // that there are no stutters from the OS having to load new pages of the executable whenever a new code page is run.
     PreloadContext preload_context;
+#if AEROASSAULT64_AFA_PRODUCT
+    // Bring-up: VirtualLock of the mapped image has caused early process exit (AV) on some MSVC/Win32 setups.
+    bool preloaded = false;
+#else
     bool preloaded = preload_executable(preload_context);
 
     if (!preloaded) {
         fprintf(stderr, "Failed to preload executable!\n");
     }
+#endif
 
 #ifdef _WIN32
     // Set up high resolution timing period.
     timeBeginPeriod(1);
 
-    // Process arguments.
-    for (int i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "--show-console") == 0)
-        {
-            if (GetConsoleWindow() == nullptr)
-            {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--show-console") == 0) {
+            if (GetConsoleWindow() == nullptr) {
                 AllocConsole();
-                freopen("CONIN$", "r", stdin);
-                freopen("CONOUT$", "w", stderr);
-                freopen("CONOUT$", "w", stdout);
+                std::freopen("CONIN$", "r", stdin);
+                std::freopen("CONOUT$", "w", stderr);
+                std::freopen("CONOUT$", "w", stdout);
+                std::setvbuf(stderr, nullptr, _IONBF, 0);
             }
-
-            break;
+#if AEROASSAULT64_AFA_PRODUCT
+        } else if (strcmp(argv[i], "--boot-log") == 0 || strcmp(argv[i], "--pause-on-exit") == 0 || strcmp(argv[i], "--auto-start") == 0) {
+            // Parsed at main() entry.
+#endif
         }
     }
+#if AEROASSAULT64_AFA_PRODUCT
+    if (g_aero_boot_log) {
+        AERO_BOOT_TRACE("stderr tee to aero_boot.log (see --boot-log path)");
+    }
+    if (g_aero_pause_on_exit && GetConsoleWindow() == nullptr) {
+        AllocConsole();
+        std::freopen("CONIN$", "r", stdin);
+        std::freopen("CONOUT$", "w", stderr);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+#endif
 
     // Set up console output to accept UTF-8 on windows
     SetConsoleOutputCP(CP_UTF8);
@@ -720,6 +855,7 @@ int main(int argc, char** argv) {
     zelda64::register_patches();
     recomputil::init_extended_actor_data();
     zelda64::load_config();
+    AERO_BOOT_TRACE("main: before recomp::start");
 
     recomp::rsp::callbacks_t rsp_callbacks{
         .get_rsp_microcode = get_rsp_microcode,
@@ -797,6 +933,18 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     // End high resolution timing period.
     timeEndPeriod(1);
+#endif
+
+#if AEROASSAULT64_AFA_PRODUCT
+    if (g_aero_boot_log) {
+        std::fclose(g_aero_boot_log);
+        g_aero_boot_log = nullptr;
+    }
+    if (g_aero_pause_on_exit) {
+        std::fprintf(stderr, "[AeroAssault64 boot] normal exit — press Enter to close\n");
+        std::fflush(stderr);
+        std::getchar();
+    }
 #endif
 
     return EXIT_SUCCESS;

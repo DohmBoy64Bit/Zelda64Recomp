@@ -719,3 +719,6 @@ void recompui::RmlRenderInterface_RT64::queue_image_from_bytes_rgba32(const std:
 
     impl->queue_image_from_bytes_rgba32(src, bytes, width, height);
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(ui_renderer);

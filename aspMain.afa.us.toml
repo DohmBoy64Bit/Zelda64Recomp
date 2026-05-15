@@ -1,0 +1,15 @@
+# RSPRecomp — AFA USA aspMain (see config/afa_rsp/aspMain.afa.us.template.toml for provenance).
+# Schema: https://raw.githubusercontent.com/Mr-Wiseguy/Zelda64Recomp/master/aspMain.us.rev1.toml
+#
+# text_offset / text_size: **`tools/rsprecomp_scan_offsets.py`** + **`tools/rsprecomp_left_edge.py`** on **`afa.n64.us.z64`** (see **`config/afa_rsp/aspMain.afa.us.template.toml`**).
+# Do not confuse ROM 0x4BE20 with RSP text — that is MIPS in asm/4BE20.s (func_8024AE70).
+
+text_offset = 0x4DAB0
+text_size = 0x1000
+text_address = 0x04001000
+rom_file_path = "afa.n64.us.z64"
+output_file_path = "rsp/aspMain.cpp"
+output_function_name = "aspMain"
+# MSVC link of rsp/aspMain.cpp failed with undefined labels until these IMEM-relative targets were listed
+# (same key as upstream aspMain.us.rev1.toml — values are AFA-specific from the first failing build).
+extra_indirect_branch_targets = [0x888, 0xF68]

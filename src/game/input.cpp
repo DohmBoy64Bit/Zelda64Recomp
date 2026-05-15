@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 
 #include "ultramodern/ultramodern.hpp"
@@ -6,6 +7,7 @@
 #include "recomp_input.h"
 #include "zelda_config.h"
 #include "recomp_ui.h"
+#include "librecomp/boot_log.hpp"
 #include "SDL.h"
 #include "promptfont.h"
 #include "GamepadMotion.hpp"
@@ -319,8 +321,10 @@ void recomp::handle_events() {
     }
 
     if (!started && ultramodern::is_game_started()) {
+        recomp_boot_log("[boot] handle_events: process_game_started");
         started = true;
         recompui::process_game_started();
+        recomp_boot_log("[boot] handle_events: process_game_started done");
     }
 }
 

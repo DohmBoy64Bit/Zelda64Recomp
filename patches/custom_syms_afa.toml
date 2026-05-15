@@ -1,0 +1,52 @@
+# AFA retail patches — runtime hook VRAs and patch-only symbols (not MM overlays).
+# recomp_* addresses match patches/syms.ld (8F000000 band); keep in sync with librecomp exports.
+[[section]]
+name = "ABSOLUTE_SYMS"
+vram = 0x00000000
+size = 0x0
+
+symbols = [
+    { name = "recomp_puts", vram = 0x8F000000 },
+    { name = "recomp_exit", vram = 0x8F000004 },
+    { name = "osRecvMesg_recomp", vram = 0x8F000010 },
+    { name = "osSendMesg_recomp", vram = 0x8F000014 },
+    { name = "recomp_get_pending_warp", vram = 0x8F000020 },
+    { name = "recomp_powf", vram = 0x8F000024 },
+    { name = "recomp_get_target_framerate", vram = 0x8F000028 },
+    { name = "recomp_get_targeting_mode", vram = 0x8F00002C },
+    { name = "recomp_get_bgm_volume", vram = 0x8F000030 },
+    { name = "recomp_get_low_health_beeps_enabled", vram = 0x8F000034 },
+    { name = "__sinf_recomp", vram = 0x8F000038 },
+    { name = "__cosf_recomp", vram = 0x8F00003C },
+    { name = "osCreateMesgQueue_recomp", vram = 0x8F000048 },
+    { name = "recomp_set_current_frame_poll_id", vram = 0x8F00004C },
+    { name = "recomp_time_us", vram = 0x8F000050 },
+    { name = "recomp_measure_latency", vram = 0x8F000054 },
+    { name = "osViGetCurrentFramebuffer_recomp", vram = 0x8F000058 },
+    { name = "bzero_recomp", vram = 0x8F00005C },
+    { name = "osFlashWriteArray_recomp", vram = 0x8F000060 },
+    { name = "osFlashWriteBuffer_recomp", vram = 0x8F000064 },
+    { name = "osWritebackDCache_recomp", vram = 0x8F000068 },
+    { name = "recomp_get_pending_set_time", vram = 0x8F00006C },
+    { name = "osContStartReadData_recomp", vram = 0x8F000070 },
+    { name = "osContGetReadData_recomp", vram = 0x8F000074 },
+    { name = "osContStartQuery_recomp", vram = 0x8F000078 },
+    { name = "osContGetQuery_recomp", vram = 0x8F00007C },
+    { name = "recomp_get_mouse_deltas", vram = 0x8F000080 },
+    { name = "bcmp_recomp", vram = 0x8F000084 },
+    { name = "osGetTime_recomp", vram = 0x8F000088 },
+    { name = "recomp_get_autosave_enabled", vram = 0x8F00008C },
+    { name = "recomp_load_overlays", vram = 0x8F000090 },
+    { name = "osInvalICache_recomp", vram = 0x8F000094 },
+    { name = "recomp_get_analog_cam_enabled", vram = 0x8F000098 },
+    { name = "recomp_get_camera_inputs", vram = 0x8F00009C },
+    { name = "recomp_set_right_analog_suppressed", vram = 0x8F0000A0 },
+    { name = "recomp_get_inverted_axes", vram = 0x8F0000A4 },
+    { name = "recomp_high_precision_fb_enabled", vram = 0x8F0000A8 },
+    { name = "recomp_get_resolution_scale", vram = 0x8F0000AC },
+    { name = "recomp_get_analog_inverted_axes", vram = 0x8F0000B0 },
+    { name = "recomp_get_window_resolution", vram = 0x8F0000B4 },
+    { name = "recomp_run_ui_callbacks", vram = 0x8F0000B8 },
+    { name = "recomp_register_actor_extension", vram = 0x8F0000BC },
+    { name = "recomp_register_actor_extension_generic", vram = 0x8F0000C0 },
+]

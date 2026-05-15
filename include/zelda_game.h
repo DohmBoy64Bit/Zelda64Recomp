@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "aero_build_config.h"
+
 namespace zelda64 {
     void quicksave_save();
     void quicksave_load();

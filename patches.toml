@@ -1,20 +1,25 @@
-# Config file for recompiling patches for the Majora's Mask NTSC 1.0 Recompilation.
+# N64Recomp patches config — template for AFA **PatchesLib** (`./N64Recomp.exe patches.toml` from engine root).
+# Upstream MM reference: https://raw.githubusercontent.com/Mr-Wiseguy/Zelda64Recomp/master/patches.toml
+#
+# For AFA: replace elf_path, func_reference_syms_file, and data_reference_syms_files with paths that
+# match your AFA patches.elf build and splat/Zelda64RecompSyms outputs for Aero Fighters Assault.
+# The mm.us.rev1.* entries below are **Majora's Mask placeholders only** — do not use for AFA retail.
+#
+# After a real AFA patches.elf + syms exist, copy this file to lib/Zelda64Recomp/patches.toml and run
+# N64Recomp from the engine root. Then configure with AEROASSAULT64_AFA_RETAIL_PIPELINES (see AFA_PORT.md §2).
 
 [input]
-# Paths are relative to the location of this config file.
 elf_path = "patches/patches.elf"
 output_func_path = "RecompiledPatches"
 single_file_output = true
-# Allow absolute symbols to be used as jump targets.
 use_absolute_symbols = true
-# Point the recompiler at the symbol files so that it can resolve relocations during recompilation.
-func_reference_syms_file = "Zelda64RecompSyms/mm.us.rev1.syms.toml"
-data_reference_syms_files = [ "Zelda64RecompSyms/mm.us.rev1.datasyms.toml", "Zelda64RecompSyms/mm.us.rev1.datasyms_static.toml", "patches/custom_syms.toml" ]
-# Tell the recompiler to write the output binary. Doing this instead of using objcopy allows the recompiler to patch MIPS32 relocs.
+func_reference_syms_file = "Zelda64RecompSyms/afa.n64.us.syms.toml"
+data_reference_syms_files = [
+  "Zelda64RecompSyms/afa.n64.us.datasyms.toml",
+  "Zelda64RecompSyms/afa.n64.us.datasyms_static.toml",
+  "patches/custom_syms_afa.toml",
+]
 output_binary_path = "patches/patches.bin"
-# Do not emit warnings for unpaired LO16 values, as clang produces many of them.
 unpaired_lo16_warnings = false
-# Allow exporting functions and events for mods to use. 
 allow_exports = true
-# # Enable strict patch mode, validates that patched symbols exist and that non-patch functions aren't symbols.
 strict_patch_mode = true

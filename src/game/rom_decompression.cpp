@@ -166,3 +166,6 @@ std::vector<uint8_t> zelda64::decompress_mm(std::span<const uint8_t> compressed_
 
     return ret;
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(rom_decompression);

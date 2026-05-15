@@ -22,7 +22,13 @@ namespace {
 struct AfaProductBuildNote {
     AfaProductBuildNote() {
         // stderr so it is visible under MSVC GUI runs; documents CMake AEROASSAULT64_AFA_PRODUCT (Docs/Workflow.md).
-        std::fprintf(stderr, "[AeroAssault64] AEROASSAULT64_AFA_PRODUCT: stub PatchesLib / RSP path; CPU from AFA N64Recomp TOML.\n");
+        std::fprintf(stderr, "[AeroAssault64] AEROASSAULT64_AFA_PRODUCT build (CPU from AFA N64Recomp; PatchesLib per CMake AFA_RETAIL_PIPELINES).\n");
+        std::fflush(stderr);
+        FILE* f = std::fopen("aero_static_init_done.txt", "w");
+        if (f) {
+            std::fprintf(f, "recomp_api static init done\n");
+            std::fclose(f);
+        }
     }
 } s_afa_product_build_note;
 } // namespace

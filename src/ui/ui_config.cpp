@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "recomp_ui.h"
 #include "recomp_input.h"
 #include "zelda_sound.h"
@@ -438,11 +440,21 @@ struct DebugContext {
 
     void update_warp_names() {
         scene_names.clear();
-        for (const auto& scene : zelda64::game_warps[area_index].scenes) {
-            scene_names.emplace_back(scene.name);
+        entrance_names.clear();
+        // AFA retail: game_warps is empty until scene_table is authored (AFA_PORT.md).
+        if (zelda64::game_warps.empty()) {
+            return;
         }
-        
-        entrance_names = zelda64::game_warps[area_index].scenes[scene_index].entrances;
+        const int area = std::clamp(area_index, 0, static_cast<int>(zelda64::game_warps.size()) - 1);
+        const auto& area_warps = zelda64::game_warps[static_cast<size_t>(area)];
+        if (area_warps.scenes.empty()) {
+            return;
+        }
+        const int scene = std::clamp(scene_index, 0, static_cast<int>(area_warps.scenes.size()) - 1);
+        for (const auto& scene_warp : area_warps.scenes) {
+            scene_names.emplace_back(scene_warp.name);
+        }
+        entrance_names = area_warps.scenes[static_cast<size_t>(scene)].entrances;
     }
 };
 

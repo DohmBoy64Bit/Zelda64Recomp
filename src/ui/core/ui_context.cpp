@@ -723,3 +723,6 @@ recompui::ContextId recompui::get_context_from_document(Rml::ElementDocument* do
     }
     return find_it->second;
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(ui_context);

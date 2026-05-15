@@ -81,6 +81,10 @@ option(AEROASSAULT64_NO_MM_ROM "Use stub PatchesLib and RSP sources (no MM ROM p
 # With AFA_PRODUCT + AEROASSAULT64_AFA_RETAIL_PIPELINES, use upstream PatchesLib (patches.elf + N64Recomp patches.toml) and real rsp/*.cpp when present.
 option(AEROASSAULT64_AFA_PRODUCT "AFA USA GameEntry + branding hooks; default stub Patches/RSP unless AFA_RETAIL_PIPELINES" OFF)
 option(AEROASSAULT64_AFA_RETAIL_PIPELINES "Requires AFA_PRODUCT: use real patches.elf + patches.toml PatchesLib path (and RSP outputs when present); see AFA_PORT.md" OFF)
+# When AFA_PRODUCT uses stub PatchesLib path (_AERO_PATCH_RSP_STUBS ON), default is still to link real
+# rsp/*.cpp if both files exist. Set this ON to link RSP stubs instead (e.g. RSPRecomp MSVC output has
+# undefined labels until text_offset/text_size/extra_indirect_branch_targets are fully validated).
+option(AEROASSAULT64_AFA_RSP_FORCE_STUBS "With AFA_PRODUCT stub path: use RSP stubs even if rsp/aspMain.cpp + rsp/njpgdspMain.cpp exist" OFF)
 set(AEROASSAULT64_STUB_DIR "${CMAKE_SOURCE_DIR}/../../tools/phase6_no_mm_engine")
 
 set(_AERO_PATCH_RSP_STUBS OFF)
@@ -146,7 +150,10 @@ target_include_directories(rt64 PRIVATE ${CMAKE_BINARY_DIR}/rt64/src)
 add_library(RecompiledFuncs STATIC)
 
 if(MSVC)
-    # cl.exe rejects GCC warning/aliasing flags (e.g. D8021 on -Wno-*).
+    # cl.exe rejects GCC warning/aliasing flags (e.g. D8021 on /Wno-*).
+    target_compile_options(RecompiledFuncs PRIVATE
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Zi>
+    )
 else()
     target_compile_options(RecompiledFuncs PRIVATE
         -fno-strict-aliasing
@@ -217,11 +224,15 @@ else()
         set(PATCHES_LD ld.lld)
     endif()
 
-    add_custom_target(PatchesBin
-        COMMAND ${CMAKE_COMMAND} -E env CC=${PATCHES_C_COMPILER} LD=${PATCHES_LD} make
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/patches
-        BYPRODUCTS ${CMAKE_SOURCE_DIR}/patches/patches.elf
-    )
+    if(EXISTS "${CMAKE_SOURCE_DIR}/patches/patches.elf")
+        message(STATUS "patches/patches.elf present — skipping PatchesBin (rebuild with make in patches/ if stale).")
+    else()
+        add_custom_target(PatchesBin
+            COMMAND ${CMAKE_COMMAND} -E env CC=${PATCHES_C_COMPILER} LD=${PATCHES_LD} make
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/patches
+            BYPRODUCTS ${CMAKE_SOURCE_DIR}/patches/patches.elf
+        )
+    endif()
 
     # Generate patches_bin.c from patches.bin
     add_custom_command(OUTPUT ${CMAKE_SOURCE_DIR}/RecompiledPatches/patches_bin.c
@@ -259,6 +270,7 @@ set (SOURCES
     ${CMAKE_SOURCE_DIR}/src/game/debug.cpp
     ${CMAKE_SOURCE_DIR}/src/game/quicksaving.cpp
     ${CMAKE_SOURCE_DIR}/src/game/recomp_api.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/afa_patch_runtime.cpp
     ${CMAKE_SOURCE_DIR}/src/game/recomp_actor_api.cpp
     ${CMAKE_SOURCE_DIR}/src/game/recomp_data_api.cpp
     ${CMAKE_SOURCE_DIR}/src/game/rom_decompression.cpp
@@ -301,10 +313,28 @@ set (SOURCES
     ${CMAKE_SOURCE_DIR}/lib/RmlUi/Backends/RmlUi_Platform_SDL.cpp
 )
 
+if(AEROASSAULT64_AFA_PRODUCT)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/aero_static_init_probe.cpp)
+endif()
+
+if(AEROASSAULT64_AFA_RETAIL_PIPELINES)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/game/afa_game_hooks.cpp)
+endif()
+
 if(_AERO_PATCH_RSP_STUBS)
     set(_AERO_RSP_ASP "${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp")
     set(_AERO_RSP_NJPG "${CMAKE_SOURCE_DIR}/rsp/njpgdspMain.cpp")
-    if(EXISTS "${_AERO_RSP_ASP}" AND EXISTS "${_AERO_RSP_NJPG}")
+    if(AEROASSAULT64_AFA_RSP_FORCE_STUBS)
+        list(REMOVE_ITEM SOURCES
+            ${_AERO_RSP_ASP}
+            ${_AERO_RSP_NJPG}
+        )
+        list(APPEND SOURCES
+            ${AEROASSAULT64_STUB_DIR}/rsp_aspMain_stub.cpp
+            ${AEROASSAULT64_STUB_DIR}/rsp_njpgdsp_stub.cpp
+        )
+        message(STATUS "AEROASSAULT64_AFA_RSP_FORCE_STUBS: linking RSP stubs (rsp/*.cpp present but ignored). Re-run CMake with option OFF when RSPRecomp output is MSVC-clean.")
+    elseif(EXISTS "${_AERO_RSP_ASP}" AND EXISTS "${_AERO_RSP_NJPG}")
         message(STATUS "Aero stub mode: found rsp/aspMain.cpp and rsp/njpgdspMain.cpp — linking RSPRecomp output (stubs skipped). See BUILDING.md section 4.")
     else()
         list(REMOVE_ITEM SOURCES
@@ -361,6 +391,14 @@ endif()
 if (MSVC)
     # Disable identical code folding, since this breaks mod function patching as multiple functions can get merged into one.
     target_link_options(Zelda64Recompiled PRIVATE /OPT:NOICF)
+    # Release PDB + linker map for post-mortem RVA -> symbol (AFA boot debugging).
+    target_compile_options(Zelda64Recompiled PRIVATE
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Zi>
+    )
+    target_link_options(Zelda64Recompiled PRIVATE
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/DEBUG:FULL>
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/MAP>
+    )
 elseif (APPLE)
     # Use a wrapper around ld64 that respects segprot's `max_prot` value in order
     # to make our executable memory writable (required for mod function patching)
@@ -488,6 +526,11 @@ if(MSVC)
     target_link_options(Zelda64Recompiled PRIVATE
         $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:/NODEFAULTLIB:LIBCMT>
     )
+    # PatchesLib is listed before RecompiledFuncs; N64Recomp stubs still emit empty RECOMP_FUNC bodies for
+    # patched VRAs (func_80248B70 / func_80248C50). Keep the PatchesLib definition (see patches/afa/required_patches_afa.c).
+    if(AEROASSAULT64_AFA_RETAIL_PIPELINES)
+        target_link_options(Zelda64Recompiled PRIVATE /FORCE:MULTIPLE)
+    endif()
 endif()
 
 # TODO fix the rt64 CMake script so that this doesn't need to be duplicated here

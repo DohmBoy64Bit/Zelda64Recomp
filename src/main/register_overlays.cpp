@@ -1,4 +1,13 @@
 #include "ovl_patches.hpp"
+
+#include "aero_build_config.h"
+
+// RecompiledFuncs compiles the game main as recomp_rom_main (see CMakeLists REcompiledFuncs).
+// This TU includes recomp_overlays.inl, which must take the address of recomp_rom_main, not host ::main.
+#if AEROASSAULT64_AFA_PRODUCT
+#define main recomp_rom_main
+#endif
+
 #include "../../RecompiledFuncs/recomp_overlays.inl"
 
 #include "librecomp/overlays.hpp"

@@ -3,10 +3,13 @@
 #include "zelda_game.h"
 #include "zelda_support.h"
 #include "librecomp/game.hpp"
+#include "librecomp/boot_log.hpp"
 #include "ultramodern/ultramodern.hpp"
 #include "RmlUi/Core.h"
 #include "nfd.h"
+#include <cstdio>
 #include <filesystem>
+#include <string>
 
 static std::string version_string;
 
@@ -20,7 +23,9 @@ void select_rom() {
     nfdnchar_t* native_path = nullptr;
     zelda64::open_file_dialog([](bool success, const std::filesystem::path& path) {
         if (success) {
-            recomp::RomValidationError rom_error = recomp::select_rom(path, zelda64::primary_supported_game_id());
+            // librecomp/game.hpp: select_rom takes std::u8string& (mutable); primary_supported_game_id() is const&.
+            std::u8string game_id = zelda64::primary_supported_game_id();
+            recomp::RomValidationError rom_error = recomp::select_rom(path, game_id);
             switch (rom_error) {
                 case recomp::RomValidationError::Good:
                     mm_rom_valid = true;
@@ -59,7 +64,8 @@ recompui::ContextId recompui::get_launcher_context_id() {
 class LauncherMenu : public recompui::MenuController {
 public:
     LauncherMenu() {
-        mm_rom_valid = recomp::is_rom_valid(zelda64::primary_supported_game_id());
+        std::u8string game_id = zelda64::primary_supported_game_id();
+        mm_rom_valid = recomp::is_rom_valid(game_id);
     }
     ~LauncherMenu() override {
 
@@ -81,8 +87,13 @@ public:
         );
         recompui::register_event(listener, "start_game",
             [](const std::string& param, Rml::Event& event) {
+                (void)param;
+                (void)event;
+                recomp_boot_log("[boot] launcher: start_game");
                 recomp::start_game(zelda64::primary_supported_game_id());
+                recomp_boot_log("[boot] launcher: start_game returned");
                 recompui::hide_all_contexts();
+                recomp_boot_log("[boot] launcher: hide_all_contexts done");
             }
         );
         recompui::register_event(listener, "open_controls",
@@ -127,3 +138,6 @@ public:
 std::unique_ptr<recompui::MenuController> recompui::create_launcher_menu() {
     return std::make_unique<LauncherMenu>();
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(ui_launcher);

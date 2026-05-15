@@ -7,19 +7,29 @@ struct RecompCustomElement {
 
 #define CUSTOM_ELEMENT(s, e) { s, std::make_unique< Rml::ElementInstancerGeneric< e > >() }
 
-static RecompCustomElement custom_elements[] = {
-    CUSTOM_ELEMENT("recomp-mod-menu", recompui::ElementModMenu),
-    CUSTOM_ELEMENT("recomp-config-sub-menu", recompui::ElementConfigSubMenu),
-};
+// Lazy-init: Rml types must not run during static init (before Rml::Initialise in ui_state.cpp).
+static RecompCustomElement* custom_elements() {
+    static RecompCustomElement elements[] = {
+        CUSTOM_ELEMENT("recomp-mod-menu", recompui::ElementModMenu),
+        CUSTOM_ELEMENT("recomp-config-sub-menu", recompui::ElementConfigSubMenu),
+    };
+    return elements;
+}
+
+static constexpr size_t custom_elements_count() {
+    return 2;
+}
 
 void recompui::register_custom_elements() {
-    for (auto& element_config : custom_elements) {
+    for (size_t i = 0; i < custom_elements_count(); ++i) {
+        auto& element_config = custom_elements()[i];
         Rml::Factory::RegisterElementInstancer(element_config.tag, element_config.instancer.get());
     }
 }
 
 Rml::ElementInstancer* recompui::get_custom_element_instancer(std::string tag) {
-    for (auto& element_config : custom_elements) {
+    for (size_t i = 0; i < custom_elements_count(); ++i) {
+        auto& element_config = custom_elements()[i];
         if (tag == element_config.tag) {
             return element_config.instancer.get();
         }

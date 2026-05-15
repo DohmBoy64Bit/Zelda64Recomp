@@ -735,3 +735,6 @@ void recomputil::register_data_api_exports() {
     REGISTER_FUNC(recomputil_memory_slotmap_erase);
     REGISTER_FUNC(recomputil_memory_slotmap_size);
 }
+
+#include "aero_static_init_probe.h"
+AERO_STATIC_INIT_PROBE(recomp_data_api);
