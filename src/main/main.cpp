@@ -399,7 +399,19 @@ extern RspUcodeFunc njpgdspMain;
 extern RspUcodeFunc aspMain;
 
 RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
+#if AEROASSAULT64_AFA_PRODUCT && AEROASSAULT64_AFA_RETAIL_PIPELINES
+    static int afa_rsp_task_count = 0;
+    if (afa_rsp_task_count < 8) {
+        ++afa_rsp_task_count;
+        recomp_boot_logf("[boot] afa: RSP task #%d type=%" PRIu32 " ucode=0x%08X data=0x%08X", afa_rsp_task_count,
+                         task->t.type, task->t.ucode, task->t.ucode_data);
+    }
+#endif
     switch (task->t.type) {
+    case M_GFXTASK:
+        // AFA Paradigm path: gfx lists via custom SP submit (func_802207E8 — asm/20F50.s), same aspMain ROM ucode.
+        return aspMain;
+
     case M_AUDTASK:
         return aspMain;
 
@@ -408,6 +420,9 @@ RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
 
     default:
         fprintf(stderr, "Unknown task: %" PRIu32 "\n", task->t.type);
+#if AEROASSAULT64_AFA_PRODUCT && AEROASSAULT64_AFA_RETAIL_PIPELINES
+        recomp_boot_logf("[boot] afa: RSP unknown task type=%" PRIu32, task->t.type);
+#endif
         return nullptr;
     }
 }
@@ -921,7 +936,11 @@ int main(int argc, char** argv) {
         .events_callbacks = events_callbacks,
         .error_handling_callbacks = error_handling_callbacks,
         .threads_callbacks = threads_callbacks,
-        .message_queue_control = {},
+        .message_queue_control = {
+#if AEROASSAULT64_AFA_PRODUCT && AEROASSAULT64_AFA_RETAIL_PIPELINES
+            .requeue_vi = true,
+#endif
+        },
     });
 
     NFD_Quit();

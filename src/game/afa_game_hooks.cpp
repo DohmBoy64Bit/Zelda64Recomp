@@ -91,6 +91,8 @@ static gpr afa_fixup_relocated_vram(gpr p) {
         return afa_vaddr(0x80274FE0u); // func_8023169C → func_8023E6B0 a1 (lui 0x8027 + 0x4FE0)
     case 0x80280C90u:
         return afa_vaddr(0x80274FC0u); // func_8023169C → func_8023E6B0 a2 (lui 0x8027 + 0x4FC0)
+    case 0x80A00584u:
+        return afa_vaddr(0x80280C70u); // D_80280C70 audio OSMesgQueue — asm/31B30.s (RecompiledFuncs lui 0x80A0+0x584)
     default:
         p = afa_fixup_datasyms_809f99xx(p);
         return p;
@@ -430,30 +432,37 @@ RECOMP_FUNC void func_802374B0(uint8_t* rdram, recomp_context* ctx) {
             finish(static_cast<gpr>(static_cast<int32_t>(-1)));
             return;
         }
-        ctx->r4 = queue;
-        func_80241DFC(rdram, ctx);
+        finish(0);
         return;
     }
 
-    gpr valid_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(8, queue)));
-    if (valid_count == 0) {
-        static int afa_osrecv_wait_log = 0;
-        if (afa_osrecv_wait_log < 4) {
-            ++afa_osrecv_wait_log;
-            recomp_boot_logf("[boot] afa: func_802374B0 empty queue=0x%08X block=%d",
-                             static_cast<uint32_t>(queue), static_cast<int32_t>(block));
+    // asm/38310.s L_802374E4..L_80237518: spin until validCount != 0 or non-blocking -1.
+    for (;;) {
+        const int32_t valid_now = static_cast<int32_t>(MEM_W(8, queue));
+        if (valid_now > 0) {
+            break;
         }
         if (block == 0) {
             finish(static_cast<gpr>(static_cast<int32_t>(-1)));
             return;
         }
-        // asm/38310.s L_80237500: mark recv wait on D_802516E0, yield.
+        static int afa_osrecv_wait_log = 0;
+        if (afa_osrecv_wait_log < 4) {
+            ++afa_osrecv_wait_log;
+            recomp_boot_logf("[boot] afa: func_802374B0 empty queue=0x%08X block=%d valid=%d",
+                             static_cast<uint32_t>(queue), static_cast<int32_t>(block), valid_now);
+        }
         const gpr evt = afa_fixup_datasyms_809f99xx(afa_vaddr(0x802516E0u));
         if (afa_is_game_vram_ptr(evt)) {
             MEM_H(0x10, evt) = static_cast<int16_t>(8);
         }
         ctx->r4 = queue;
         func_80241DFC(rdram, ctx);
+    }
+
+    gpr valid_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(8, queue)));
+    if (static_cast<int32_t>(valid_count) <= 0) {
+        finish(static_cast<gpr>(static_cast<int32_t>(-1)));
         return;
     }
 
@@ -481,7 +490,8 @@ RECOMP_FUNC void func_802374B0(uint8_t* rdram, recomp_context* ctx) {
 
     MEM_W(8, queue) = static_cast<int32_t>(static_cast<uint32_t>(ADD32(valid_count, -1)));
 
-    gpr wait_list = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, queue)));
+    // asm/38310.s L_80237594: wake send-waiters on queue+4 (not +0).
+    gpr wait_list = static_cast<gpr>(static_cast<int32_t>(MEM_W(4, queue)));
     wait_list = afa_fixup_relocated_vram(wait_list);
     if (wait_list != 0 && afa_is_game_vram_ptr(wait_list)) {
         gpr waiter = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, wait_list)));
@@ -501,6 +511,99 @@ RECOMP_FUNC void func_802374B0(uint8_t* rdram, recomp_context* ctx) {
         recomp_boot_logf("[boot] afa: func_802374B0 recv queue=0x%08X msg=0x%08X valid->%d",
                          static_cast<uint32_t>(queue), static_cast<uint32_t>(msg_ptr),
                          static_cast<int32_t>(ADD32(valid_count, -1)));
+    }
+    finish(0);
+}
+
+// Host replacement for func_80236B80 (asm/37B30.s): osSendMesg — enqueue + wake recv waiters on queue+0.
+RECOMP_FUNC void func_80236B80(uint8_t* rdram, recomp_context* ctx) {
+    const gpr msg = ctx->r5;
+    const gpr block = ctx->r6;
+    gpr queue = afa_fixup_relocated_vram(ctx->r4);
+
+    func_80241760(rdram, ctx);
+    const gpr saved_ie = ctx->r2;
+
+    auto finish = [&](gpr ret) {
+        ctx->r4 = saved_ie;
+        func_80241780(rdram, ctx);
+        ctx->r2 = ret;
+    };
+
+    if (!afa_is_game_vram_ptr(queue)) {
+        static int afa_ossend_bad_log = 0;
+        if (afa_ossend_bad_log < 4) {
+            ++afa_ossend_bad_log;
+            recomp_boot_logf("[boot] afa: func_80236B80 idle (bad queue=0x%08X)", static_cast<uint32_t>(queue));
+        }
+        if (block == 0) {
+            finish(static_cast<gpr>(static_cast<int32_t>(-1)));
+            return;
+        }
+        finish(0);
+        return;
+    }
+
+    gpr valid_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(8, queue)));
+    gpr msg_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x10, queue)));
+    const int32_t mc = static_cast<int32_t>(msg_count);
+    if (mc <= 0) {
+        static int afa_ossend_nomsg_log = 0;
+        if (afa_ossend_nomsg_log < 4) {
+            ++afa_ossend_nomsg_log;
+            recomp_boot_logf("[boot] afa: func_80236B80 break msgCount=0 queue=0x%08X",
+                             static_cast<uint32_t>(queue));
+        }
+        finish(static_cast<gpr>(static_cast<int32_t>(-1)));
+        return;
+    }
+
+    while (static_cast<int32_t>(valid_count) >= mc) {
+        if (block == 0) {
+            finish(static_cast<gpr>(static_cast<int32_t>(-1)));
+            return;
+        }
+        const gpr evt = afa_fixup_datasyms_809f99xx(afa_vaddr(0x802516E0u));
+        if (afa_is_game_vram_ptr(evt)) {
+            MEM_H(0x10, evt) = static_cast<int16_t>(8);
+        }
+        ctx->r4 = ADD32(queue, 4);
+        func_80241DFC(rdram, ctx);
+        valid_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(8, queue)));
+    }
+
+    const gpr read_idx = static_cast<gpr>(static_cast<int32_t>(MEM_W(0xC, queue)));
+    gpr msg_array = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x14, queue)));
+    msg_array = afa_fixup_relocated_vram(msg_array);
+    const int32_t ri = static_cast<int32_t>(read_idx);
+    const int32_t vc = static_cast<int32_t>(valid_count);
+    const int32_t slot = (ri + vc) % mc;
+    gpr msg_slot = ADD32(msg_array, S32(slot << 2));
+    MEM_W(0, msg_slot) = static_cast<int32_t>(static_cast<uint32_t>(msg));
+
+    MEM_W(8, queue) = static_cast<int32_t>(static_cast<uint32_t>(ADD32(valid_count, 1)));
+
+    // asm/37B30.s L_80236C84: wake recv-waiters on queue+0 wait list.
+    gpr wait_list = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, queue)));
+    wait_list = afa_fixup_relocated_vram(wait_list);
+    if (wait_list != 0 && afa_is_game_vram_ptr(wait_list)) {
+        gpr waiter = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, wait_list)));
+        waiter = afa_fixup_relocated_vram(waiter);
+        if (waiter != 0) {
+            ctx->r4 = queue;
+            func_80241F44(rdram, ctx);
+            gpr awakened = afa_fixup_relocated_vram(ctx->r2);
+            ctx->r4 = awakened;
+            func_80237360(rdram, ctx);
+        }
+    }
+
+    static int afa_ossend_ok_log = 0;
+    if (afa_ossend_ok_log < 8) {
+        ++afa_ossend_ok_log;
+        recomp_boot_logf("[boot] afa: func_80236B80 send queue=0x%08X msg=0x%08X valid->%d",
+                         static_cast<uint32_t>(queue), static_cast<uint32_t>(msg),
+                         static_cast<int32_t>(ADD32(valid_count, 1)));
     }
     finish(0);
 }
