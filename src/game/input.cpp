@@ -8,6 +8,7 @@
 #include "zelda_config.h"
 #include "recomp_ui.h"
 #include "librecomp/boot_log.hpp"
+#include "librecomp/game.hpp"
 #include "SDL.h"
 #include "promptfont.h"
 #include "GamepadMotion.hpp"
@@ -320,7 +321,8 @@ void recomp::handle_events() {
         SDL_SetRelativeMouseMode(cursor_locked ? SDL_TRUE : SDL_FALSE);
     }
 
-    if (!started && ultramodern::is_game_started()) {
+  // is_game_started() flips when start_game notifies; ROM load/init still run on the game thread.
+    if (!started && ultramodern::is_game_started() && recomp::is_rom_loaded()) {
         recomp_boot_log("[boot] handle_events: process_game_started");
         started = true;
         recompui::process_game_started();

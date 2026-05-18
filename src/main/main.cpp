@@ -236,7 +236,8 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
 void update_gfx(void*) {
 #if AEROASSAULT64_AFA_PRODUCT
     std::u8string auto_start_id = zelda64::primary_supported_game_id();
-    if (g_aero_auto_start && !g_aero_auto_start_done && recomp::is_rom_valid(auto_start_id)) {
+    if (g_aero_auto_start && !g_aero_auto_start_done && recomp::is_game_preinit_done() &&
+        recomp::is_rom_valid(auto_start_id) && !ultramodern::is_game_started()) {
         g_aero_auto_start_done = true;
         AERO_BOOT_TRACE("auto-start: calling start_game");
         recomp::start_game(zelda64::primary_supported_game_id());
@@ -433,6 +434,7 @@ gpr get_entrypoint_address();
 #if AEROASSAULT64_AFA_RETAIL_PIPELINES
 namespace zelda64 {
 void afa_on_init_after_overlays(uint8_t* rdram, recomp_context* ctx);
+void afa_host_vi_retrace_pulse();
 }
 #endif
 
@@ -899,8 +901,18 @@ int main(int argc, char** argv) {
         .get_connected_device_info = recomp::get_connected_device_info,
     };
 
+#if AEROASSAULT64_AFA_RETAIL_PIPELINES
+    auto afa_vi_callback = []() {
+        recomp::update_rumble();
+        zelda64::afa_host_vi_retrace_pulse();
+    };
+#endif
     ultramodern::events::callbacks_t events_callbacks{
+#if AEROASSAULT64_AFA_RETAIL_PIPELINES
+        .vi_callback = afa_vi_callback,
+#else
         .vi_callback = recomp::update_rumble,
+#endif
         .gfx_init_callback = recompui::update_supported_options,
     };
 
