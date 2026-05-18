@@ -19,11 +19,24 @@
 #include "librecomp/game.hpp"
 #include "librecomp/overlays.hpp"
 #include "librecomp/boot_log.hpp"
+#include "ultramodern/ultra64.h"
+#include "ultramodern/ultramodern.hpp"
 #include "../../../RecompiledFuncs/funcs.h"
 #include "../../RecompiledPatches/funcs.h"
 
 extern "C" void recomp_entrypoint(uint8_t* rdram, recomp_context* ctx);
 extern "C" void recomp_rom_main(uint8_t* rdram, recomp_context* ctx);
+// Recompiled thread/RSP entry points (funcs_*.c); trampolines log first entry.
+extern "C" void func_8023169C(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_80231584(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_80231630(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_80248D30(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_8023E6B0(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_802374B0(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_802371E0(uint8_t* rdram, recomp_context* ctx); // asm/380D0.s — not in func_map
+extern "C" void func_8023DF30(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_80246BB0(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_8023DCE8(uint8_t* rdram, recomp_context* ctx); // asm/3EA90.s thread entry (pri 0xFE)
 
 extern "C" {
 
@@ -62,11 +75,24 @@ static gpr afa_fixup_relocated_vram(gpr p) {
         return afa_vaddr(0x80284E50u); // D_80284E50 — asm/3F660.s DMA stack base
     case 0x802751E8u:
         return afa_vaddr(0x80280EB8u); // D_80280EB8 — asm/31B30.s (func_8023169C)
+    case 0x802851E8u:
+        return afa_vaddr(0x80280EB8u); // recomp slip (lui 0x8028 + addiu 0x51E8)
     case 0x80275038u:
         return afa_vaddr(0x80280D08u); // D_80280D08 — asm/31B30.s
+    case 0x80285038u:
+        return afa_vaddr(0x80280D08u); // recomp slip (lui 0x8028 + addiu 0x5038)
     case 0x8026EE90u:
         return afa_vaddr(0x8027AB60u); // D_8027AB60 — stack base in asm/31B30.s sp+0x10
+    case 0x80267EC0u:
+        return afa_vaddr(0x80273B90u); // D_80273B90 — RSP task queue (func_802207E8)
+    case 0x80267EE0u:
+        return afa_vaddr(0x80273BB0u); // D_80273BB0 — asm/20F50.s
+    case 0x80280CB0u:
+        return afa_vaddr(0x80274FE0u); // func_8023169C → func_8023E6B0 a1 (lui 0x8027 + 0x4FE0)
+    case 0x80280C90u:
+        return afa_vaddr(0x80274FC0u); // func_8023169C → func_8023E6B0 a2 (lui 0x8027 + 0x4FC0)
     default:
+        p = afa_fixup_datasyms_809f99xx(p);
         return p;
     }
 }
@@ -101,8 +127,8 @@ static bool afa_is_plausible_tcb(gpr p) {
 }
 
 static gpr afa_main_thread_tcb() {
-    // func_8023169C uses D_80280EB8 (asm/31B30.s); D_80281068 is a separate 0x1B0 block (asm/data/57D20.bss.s).
-    return afa_vaddr(0x80280EB8u);
+    // main() creates the game thread at D_80281068 (asm/31B30.s 80231214); D_80280EB8 is the audio TCB.
+    return afa_vaddr(0x80281068u);
 }
 
 static gpr afa_get_current_thread_tcb(uint8_t* rdram) {
@@ -194,34 +220,44 @@ RECOMP_FUNC void func_80248090(uint8_t* rdram, recomp_context* ctx) {
     ctx->r2 = 0;
 }
 
-// Game: asm/42750.s — sorted linked-list insert; a0 = &head (D_802516D8), a1 = node.
+// Game: asm/42750.s func_80241EFC — sorted insert; a0 = &D_802516D8, a1 = OSThread*.
+// Walks from *a0 (sentinel D_802516D0 or thread chain); slt on +0x4; links prev->next = ins.
 RECOMP_FUNC void func_80241EFC(uint8_t* rdram, recomp_context* ctx) {
     (void)rdram;
-    const gpr head = afa_fixup_list_head_ptr(ctx->r4);
+    const gpr list_head_ptr = afa_fixup_list_head_ptr(ctx->r4);
     const gpr ins = afa_fixup_thread_tcb(ctx->r5);
-    if (!afa_is_game_vram_ptr(head) || !afa_is_game_vram_ptr(ins)) {
+    if (!afa_is_game_vram_ptr(list_head_ptr) || !afa_is_game_vram_ptr(ins)) {
         return;
     }
 
-    const int32_t ins_sz = static_cast<int32_t>(MEM_W(4, ins));
-    gpr prev = head;
-    gpr cur = MEM_W(0, head);
-    while (cur != 0) {
-        if (!afa_is_game_vram_ptr(cur)) {
-            return;
+    const int32_t ins_pri = static_cast<int32_t>(MEM_W(4, ins));
+    gpr prev = list_head_ptr;
+    gpr cur = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, list_head_ptr)));
+    if (cur == 0) {
+        return;
+    }
+    cur = afa_fixup_relocated_vram(cur);
+
+    if (static_cast<int32_t>(MEM_W(4, cur)) < ins_pri) {
+        // Game: bnez slt -> .L80241F30 with prev still list_head_ptr (asm/42750.s 80241F10).
+    } else {
+        while (true) {
+            prev = cur;
+            cur = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, cur)));
+            if (cur == 0) {
+                break;
+            }
+            cur = afa_fixup_relocated_vram(cur);
+            if (static_cast<int32_t>(MEM_W(4, cur)) < ins_pri) {
+                break;
+            }
         }
-        const int32_t cur_sz = static_cast<int32_t>(MEM_W(4, cur));
-        if (cur_sz >= ins_sz) {
-            break;
-        }
-        prev = cur;
-        cur = MEM_W(0, cur);
     }
 
-    const gpr next = MEM_W(0, prev);
-    MEM_W(0, ins) = next;
-    MEM_W(0, prev) = ins;
-    MEM_W(8, ins) = head;
+    const gpr next = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, prev)));
+    MEM_W(0, ins) = static_cast<int32_t>(static_cast<uint32_t>(next));
+    MEM_W(0, prev) = static_cast<int32_t>(static_cast<uint32_t>(ins));
+    MEM_W(8, ins) = static_cast<int32_t>(static_cast<uint32_t>(list_head_ptr));
 }
 
 // Game: asm/381C0.s — init thread control block (a0=TCB, a1=priority, a2=entry, a3=arg).
@@ -233,11 +269,20 @@ RECOMP_FUNC void func_80237210(uint8_t* rdram, recomp_context* ctx) {
     if (static_cast<uint32_t>(tcb) == 0x80284CA0u) {
         stack_top = ADD32(afa_vaddr(0x80284E50u), 0x1000); // asm/3F660.s t9 = D_80284E50 + 0x1000
     } else if (static_cast<uint32_t>(tcb) == 0x80280EB8u) {
-        stack_top = afa_vaddr(0x8027CB60u); // D_8027AB60 + 0x2000 — asm/data/57D20.bss.s
+        stack_top = afa_vaddr(0x8027AB60u); // D_8027AB60 — asm/31B30.s func_8023169C audio thread
+    } else if (static_cast<uint32_t>(tcb) == 0x80280D08u) {
+        stack_top = afa_vaddr(0x80280B60u); // D_80280B60 — asm/31B30.s func_8023169C VI thread
+    } else if (static_cast<uint32_t>(tcb) == 0x80281068u) {
+        stack_top = afa_vaddr(0x8027CB60u); // D_8027CB60 — asm/31B30.s main() osCreateThread
     }
 
-    MEM_W(0x14, tcb) = ctx->r5;
-    MEM_W(0x4, tcb) = 0; // asm/381C0.s +0x4 — scheduler counter; not stack (func_80247490)
+    MEM_W(0x14, tcb) = ctx->r5; // a1 osPriority — asm/381C0.s ADEE0014
+    // +0x4 from caller sp+0x14 (asm/381C0.s AF380004 / lw 0x3C(sp) after -0x28 prologue).
+    gpr sched_counter = 0;
+    if (afa_is_game_vram_ptr(ctx->r29)) {
+        sched_counter = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x14, ctx->r29)));
+    }
+    MEM_W(0x4, tcb) = static_cast<int32_t>(static_cast<uint32_t>(sched_counter));
     MEM_W(0, tcb) = 0;
     MEM_W(8, tcb) = 0;
     MEM_W(0x11C, tcb) = static_cast<int32_t>(static_cast<uint32_t>(entry));
@@ -250,25 +295,314 @@ RECOMP_FUNC void func_80237210(uint8_t* rdram, recomp_context* ctx) {
     MEM_W(0x128, tcb) = 0;
     MEM_W(0x12C, tcb) = 0x1000800;
     MEM_W(0x18, tcb) = 0;
-    MEM_W(0xF0, tcb) = static_cast<int32_t>(static_cast<uint32_t>(stack_top));
-    MEM_H(0x10, tcb) = 1;
+    // Initial SP must match SD/LD at +0xF0 (afa_save_thread_context / afa_restore_thread_and_run).
+    SD(static_cast<uint64_t>(static_cast<uint32_t>(stack_top)), 0xF0, tcb);
+    // Thread entry argument (a3) — restored as $a0 on first dispatch (e.g. PI queue D_802516A0 for func_80248D30).
+    MEM_W(0x38, tcb) = static_cast<int32_t>(static_cast<uint32_t>(afa_fixup_relocated_vram(ctx->r7)));
+    MEM_H(0x10, tcb) = 1; // asm/381C0.s A5180010 — created, not yet on run queue
     MEM_H(0x12, tcb) = 0;
 
     func_80241760(rdram, ctx);
     const gpr ie = ctx->r2;
-    MEM_W(0, afa_vaddr(0x802516DCu)) = static_cast<int32_t>(static_cast<uint32_t>(tcb));
+    const gpr prev_tcb = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, afa_vaddr(0x802516DCu))));
+    MEM_W(0xC, tcb) = static_cast<int32_t>(static_cast<uint32_t>(prev_tcb)); // asm/381C0.s AD6A000C
     ctx->r4 = ie;
     func_80241780(rdram, ctx);
+    MEM_W(0, afa_vaddr(0x802516DCu)) = static_cast<int32_t>(static_cast<uint32_t>(tcb)); // asm/381C0.s AC3916DC
 
-    // Mirror func_80237360 state==1: enqueue runnable thread on D_802516D8 (asm/38310.s).
-    MEM_H(0x10, tcb) = 2;
-    const gpr prev_r4 = ctx->r4;
-    const gpr prev_r5 = ctx->r5;
-    ctx->r4 = afa_fixup_list_head_ptr(afa_vaddr(0x802516D8u));
-    ctx->r5 = tcb;
-    func_80241EFC(rdram, ctx);
-    ctx->r4 = prev_r4;
-    ctx->r5 = prev_r5;
+    static int afa_enqueue_log_count = 0;
+    if (afa_enqueue_log_count < 8) {
+        ++afa_enqueue_log_count;
+        recomp_boot_logf("[boot] afa: func_80237210 init tcb=0x%08X +4=%d state=1 (enqueue via func_80237360)",
+                         static_cast<uint32_t>(tcb), static_cast<int32_t>(sched_counter));
+    }
+}
+
+// Game: asm/3F660.s / func_8023E6B0 — PI manager globals at D_802516A0 (recomp sw via 0x80A0-0x6680 lands in wrong RDRAM).
+static void afa_pi_manager_fixup_globals(uint8_t* rdram, gpr callback_from_a1) {
+    (void)rdram;
+    gpr cb = afa_fixup_relocated_vram(callback_from_a1);
+    if (!afa_is_game_vram_ptr(cb)) {
+        cb = 0;
+    }
+    const gpr d_802516a0 = afa_vaddr(0x802516A0u);
+    MEM_W(0, d_802516a0) = 1;
+    MEM_W(4, d_802516a0) = static_cast<int32_t>(static_cast<uint32_t>(afa_vaddr(0x80284CA0u)));
+    MEM_W(8, d_802516a0) = static_cast<int32_t>(static_cast<uint32_t>(cb));
+    MEM_W(0xC, d_802516a0) = static_cast<int32_t>(static_cast<uint32_t>(afa_vaddr(0x80285E50u))); // D_802516AC — asm/3F660.s
+
+    const gpr d_802516b0 = afa_vaddr(0x802516B0u);
+    MEM_W(0, d_802516b0) = static_cast<int32_t>(static_cast<uint32_t>(afa_vaddr(0x80285F28u))); // asm/3F660.s
+    MEM_W(4, d_802516b0) = static_cast<int32_t>(static_cast<uint32_t>(afa_vaddr(0x80248B70u)));
+    MEM_W(8, d_802516b0) = static_cast<int32_t>(static_cast<uint32_t>(afa_vaddr(0x80248C50u)));
+}
+
+// Host replacement for func_8023E6B0 (funcs_6.c): recomp stores OS globals via 0x80A0-* into wrong RDRAM.
+RECOMP_FUNC void func_8023E6B0(uint8_t* rdram, recomp_context* ctx) {
+    const gpr pri_max = ctx->r4;
+    const gpr callback_a1 = afa_fixup_relocated_vram(ctx->r5);
+    const gpr mesg_a2 = afa_fixup_relocated_vram(ctx->r6);
+    const gpr old_sp = ctx->r29;
+    const gpr old_ra = ctx->r31;
+
+    if (MEM_W(0, afa_vaddr(0x802516A0u)) != 0) {
+        return;
+    }
+
+    ctx->r29 = ADD32(old_sp, -0x30);
+    MEM_W(0x1C, ctx->r29) = old_ra;
+
+    ctx->r4 = callback_a1;
+    ctx->r5 = mesg_a2;
+    ctx->r6 = ctx->r7;
+    func_802371E0(rdram, ctx); // asm/380D0.s osCreateMesgQueue (link, not func_map)
+
+    ctx->r4 = afa_vaddr(0x80285E50u); // D_80285E50 — asm/3F660.s (not recomp -0x5E80 slip)
+    ctx->r5 = afa_vaddr(0x80285E68u); // D_80285E68
+    ctx->r6 = 1;
+    func_802371E0(rdram, ctx);
+
+    const gpr flag = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, afa_vaddr(0x80251A60u)))); // D_80251A60
+    if (flag == 0) {
+        func_80246BB0(rdram, ctx);
+    }
+
+    ctx->r4 = 8;
+    ctx->r5 = afa_vaddr(0x80285E50u); // D_80285E50 — asm/3F660.s jal func_8023DF30
+    ctx->r6 = static_cast<gpr>(static_cast<int32_t>(0x22222222u));
+    func_8023DF30(rdram, ctx);
+
+    func_80241760(rdram, ctx);
+    const gpr saved_ie = ctx->r2;
+
+    afa_pi_manager_fixup_globals(rdram, callback_a1);
+
+    if (afa_is_game_vram_ptr(ctx->r29)) {
+        MEM_W(0x14, ctx->r29) = static_cast<int32_t>(static_cast<uint32_t>(pri_max));
+    }
+
+    ctx->r4 = afa_vaddr(0x80284CA0u);
+    ctx->r5 = 0;
+    ctx->r6 = afa_vaddr(0x80248D30u);
+    ctx->r7 = afa_vaddr(0x802516A0u);
+    func_80237210(rdram, ctx);
+
+    ctx->r4 = afa_vaddr(0x80284CA0u);
+    func_80237360(rdram, ctx);
+
+    ctx->r4 = saved_ie;
+    func_80241780(rdram, ctx);
+
+    ctx->r31 = MEM_W(0x1C, ctx->r29);
+    ctx->r29 = old_sp;
+
+    static int afa_pi_init_log = 0;
+    if (afa_pi_init_log < 2) {
+        ++afa_pi_init_log;
+        recomp_boot_logf("[boot] afa: func_8023E6B0 PI globals fixed D_802516A8=0x%08X",
+                         static_cast<uint32_t>(static_cast<int32_t>(MEM_W(8, afa_vaddr(0x802516A0u)))));
+    }
+}
+
+// Host replacement for func_802374B0 (asm/38310.s): osRecvMesg — full dequeue per libultra OSMesgQueue layout.
+// Queue: +0 waitList, +4 (unused link), +8 validCount, +0xC readIndex, +0x10 msgCount, +0x14 msgArray.
+RECOMP_FUNC void func_802374B0(uint8_t* rdram, recomp_context* ctx) {
+    const gpr mesg_out = ctx->r5;
+    const gpr block = ctx->r6;
+    gpr queue = afa_fixup_relocated_vram(ctx->r4);
+
+    func_80241760(rdram, ctx);
+    const gpr saved_ie = ctx->r2;
+
+    auto finish = [&](gpr ret) {
+        ctx->r4 = saved_ie;
+        func_80241780(rdram, ctx);
+        ctx->r2 = ret;
+    };
+
+    if (!afa_is_game_vram_ptr(queue)) {
+        static int afa_osrecv_empty_log = 0;
+        if (afa_osrecv_empty_log < 4) {
+            ++afa_osrecv_empty_log;
+            recomp_boot_logf("[boot] afa: func_802374B0 idle (bad queue=0x%08X)", static_cast<uint32_t>(queue));
+        }
+        if (block == 0) {
+            finish(static_cast<gpr>(static_cast<int32_t>(-1)));
+            return;
+        }
+        ctx->r4 = queue;
+        func_80241DFC(rdram, ctx);
+        return;
+    }
+
+    gpr valid_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(8, queue)));
+    if (valid_count == 0) {
+        static int afa_osrecv_wait_log = 0;
+        if (afa_osrecv_wait_log < 4) {
+            ++afa_osrecv_wait_log;
+            recomp_boot_logf("[boot] afa: func_802374B0 empty queue=0x%08X block=%d",
+                             static_cast<uint32_t>(queue), static_cast<int32_t>(block));
+        }
+        if (block == 0) {
+            finish(static_cast<gpr>(static_cast<int32_t>(-1)));
+            return;
+        }
+        // asm/38310.s L_80237500: mark recv wait on D_802516E0, yield.
+        const gpr evt = afa_fixup_datasyms_809f99xx(afa_vaddr(0x802516E0u));
+        if (afa_is_game_vram_ptr(evt)) {
+            MEM_H(0x10, evt) = static_cast<int16_t>(8);
+        }
+        ctx->r4 = queue;
+        func_80241DFC(rdram, ctx);
+        return;
+    }
+
+    gpr msg_ptr = 0;
+    if (mesg_out != 0 && afa_is_game_vram_ptr(mesg_out)) {
+        const gpr read_idx = static_cast<gpr>(static_cast<int32_t>(MEM_W(0xC, queue)));
+        gpr msg_array = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x14, queue)));
+        msg_array = afa_fixup_relocated_vram(msg_array);
+        const gpr msg_count = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x10, queue)));
+        const int32_t mc = static_cast<int32_t>(msg_count);
+        if (mc <= 0) {
+            recomp_boot_logf("[boot] afa: func_802374B0 break msgCount=0 queue=0x%08X valid=%d",
+                            static_cast<uint32_t>(queue), static_cast<int32_t>(valid_count));
+            finish(0);
+            return;
+        }
+        const int32_t ri = static_cast<int32_t>(read_idx);
+        gpr msg_slot = ADD32(msg_array, S32(ri << 2));
+        msg_ptr = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, msg_slot)));
+        msg_ptr = afa_fixup_relocated_vram(msg_ptr);
+        MEM_W(0, mesg_out) = static_cast<int32_t>(static_cast<uint32_t>(msg_ptr));
+        const int32_t new_read = (ri + 1) % mc;
+        MEM_W(0xC, queue) = static_cast<int32_t>(static_cast<uint32_t>(new_read));
+    }
+
+    MEM_W(8, queue) = static_cast<int32_t>(static_cast<uint32_t>(ADD32(valid_count, -1)));
+
+    gpr wait_list = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, queue)));
+    wait_list = afa_fixup_relocated_vram(wait_list);
+    if (wait_list != 0 && afa_is_game_vram_ptr(wait_list)) {
+        gpr waiter = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, wait_list)));
+        waiter = afa_fixup_relocated_vram(waiter);
+        if (waiter != 0) {
+            ctx->r4 = ADD32(queue, 4);
+            func_80241F44(rdram, ctx);
+            gpr awakened = afa_fixup_relocated_vram(ctx->r2);
+            ctx->r4 = awakened;
+            func_80237360(rdram, ctx);
+        }
+    }
+
+    static int afa_osrecv_ok_log = 0;
+    if (afa_osrecv_ok_log < 8) {
+        ++afa_osrecv_ok_log;
+        recomp_boot_logf("[boot] afa: func_802374B0 recv queue=0x%08X msg=0x%08X valid->%d",
+                         static_cast<uint32_t>(queue), static_cast<uint32_t>(msg_ptr),
+                         static_cast<int32_t>(ADD32(valid_count, -1)));
+    }
+    finish(0);
+}
+
+// First runnable thread in queue (skip sentinel D_802516D0) — asm/3F7F0.s compares *D_802516D8.
+static gpr afa_scheduler_peek_head_thread(uint8_t* rdram) {
+    (void)rdram;
+    const gpr list_head = afa_fixup_list_head_ptr(afa_vaddr(0x802516D8u));
+    gpr node = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, list_head)));
+    node = afa_fixup_relocated_vram(node);
+    if (node == 0) {
+        return 0;
+    }
+    if (static_cast<uint32_t>(node) == 0x802516D0u) {
+        node = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, node)));
+        node = afa_fixup_relocated_vram(node);
+    }
+    return node;
+}
+
+// AFA does not call libultra osSpTaskStartGo; it builds OSTask structs and pokes SP via func_802207E8 (asm/20F50.s).
+static void afa_copy_rsp_task_stack_args(uint8_t* rdram, recomp_context* ctx) {
+    (void)rdram;
+    gpr t6 = ADD32(ctx->r29, 0x50);
+    const gpr t8 = ADD32(t6, 0x3C);
+    gpr t9 = ctx->r29;
+    while (t6 != t8) {
+        gpr at = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, t6)));
+        t6 = ADD32(t6, 0xC);
+        t9 = ADD32(t9, 0xC);
+        MEM_W(-0xC, t9) = static_cast<int32_t>(static_cast<uint32_t>(at));
+        at = static_cast<gpr>(static_cast<int32_t>(MEM_W(-8, t6)));
+        MEM_W(-8, t9) = static_cast<int32_t>(static_cast<uint32_t>(at));
+        at = static_cast<gpr>(static_cast<int32_t>(MEM_W(-4, t6)));
+        MEM_W(-4, t9) = static_cast<int32_t>(static_cast<uint32_t>(at));
+    }
+    const gpr at = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, t6)));
+    MEM_W(0, t9) = static_cast<int32_t>(static_cast<uint32_t>(at));
+}
+
+static void afa_submit_rsp_task_ptr(uint8_t* rdram, gpr task_ptr) {
+    task_ptr = afa_fixup_relocated_vram(task_ptr);
+    if (!afa_is_game_vram_ptr(task_ptr)) {
+        return;
+    }
+    static int afa_rsp_submit_count = 0;
+    if (afa_rsp_submit_count < 16) {
+        ++afa_rsp_submit_count;
+        const uint32_t ty = static_cast<uint32_t>(MEM_W(0, task_ptr));
+        recomp_boot_logf("[boot] afa: submit_rsp_task ptr=0x%08X type=%u", static_cast<uint32_t>(task_ptr), ty);
+    }
+    ultramodern::submit_rsp_task(rdram, task_ptr);
+}
+
+// Game: asm/20F50.s func_802207E8 — build OSTask, queue header 0x01020040 (M_GFXTASK), custom SP path.
+static void afa_run_custom_rsp_task_submit(uint8_t* rdram, recomp_context* ctx, uint32_t task_header_word) {
+    const gpr entry_sp = ctx->r29;
+    const gpr saved_ra = ctx->r31;
+
+    ctx->r29 = ADD32(entry_sp, -0x50);
+    MEM_W(0x44, ctx->r29) = saved_ra;
+    MEM_W(0x50, ctx->r29) = ctx->r4;
+    MEM_W(0x54, ctx->r29) = ctx->r5;
+    MEM_W(0x58, ctx->r29) = ctx->r6;
+    MEM_W(0x5C, ctx->r29) = ctx->r7;
+
+    afa_copy_rsp_task_stack_args(rdram, ctx);
+
+    ctx->r7 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0xC, ctx->r29)));
+    ctx->r6 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x8, ctx->r29)));
+    ctx->r5 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x4, ctx->r29)));
+    ctx->r4 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, ctx->r29)));
+    get_function(static_cast<int32_t>(0x80222D4Cu))(rdram, ctx);
+
+    const gpr queue = afa_vaddr(0x80273B90u);
+    gpr slot = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, queue)));
+    slot = afa_fixup_relocated_vram(slot);
+    MEM_W(0, slot) = static_cast<int32_t>(task_header_word);
+    MEM_W(0, queue) = static_cast<int32_t>(static_cast<uint32_t>(ADD32(slot, 8)));
+
+    get_function(static_cast<int32_t>(0x80222E24u))(rdram, ctx);
+    gpr task_ptr = afa_fixup_relocated_vram(ctx->r2);
+    MEM_W(0x4C, ctx->r29) = static_cast<int32_t>(static_cast<uint32_t>(task_ptr));
+
+    ctx->r4 = task_ptr;
+    get_function(static_cast<int32_t>(0x802375F0u))(rdram, ctx);
+    MEM_W(0x4, task_ptr) = static_cast<int32_t>(static_cast<uint32_t>(ctx->r2));
+
+    ctx->r31 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x44, ctx->r29)));
+    ctx->r29 = entry_sp;
+
+    afa_submit_rsp_task_ptr(rdram, task_ptr);
+}
+
+RECOMP_FUNC void func_802207E8(uint8_t* rdram, recomp_context* ctx) {
+    // 0x01020040 — asm/20F50.s 80220858 (byte 0 == M_GFXTASK per PR/sptask.h).
+    afa_run_custom_rsp_task_submit(rdram, ctx, 0x01020040u);
+}
+
+RECOMP_FUNC void func_802208B4(uint8_t* rdram, recomp_context* ctx) {
+    // 0x01030040 — asm/20F50.s 80220924 (second gfx submit variant).
+    afa_run_custom_rsp_task_submit(rdram, ctx, 0x01030040u);
 }
 
 // Game: asm/48040.s — if a0==0 use D_802516E0 else a0; return lw +0x4 (thread counter).
@@ -305,12 +639,26 @@ RECOMP_FUNC void func_8023E840(uint8_t* rdram, recomp_context* ctx) {
         }
     }
 
-    const gpr list_head = afa_fixup_list_head_ptr(afa_vaddr(0x802516D8u));
-    const gpr head_node = MEM_W(0, list_head);
-    if (head_node != 0 && afa_is_plausible_tcb(head_node) && afa_is_plausible_tcb(global_cur)) {
+    const gpr head_thread = afa_scheduler_peek_head_thread(rdram);
+    static int afa_yield_log_count = 0;
+    if (afa_yield_log_count < 8) {
+        ++afa_yield_log_count;
+        recomp_boot_logf("[boot] afa: func_8023E840 yield check cur=0x%08X head=0x%08X cur+4=%d head+4=%d",
+                         static_cast<uint32_t>(global_cur), static_cast<uint32_t>(head_thread),
+                         static_cast<int32_t>(MEM_W(4, global_cur)),
+                         head_thread != 0 ? static_cast<int32_t>(MEM_W(4, head_thread)) : -1);
+    }
+    if (head_thread != 0 && afa_is_plausible_tcb(head_thread) && afa_is_plausible_tcb(global_cur) &&
+        head_thread != global_cur) {
         const int32_t cur_pri = static_cast<int32_t>(MEM_W(4, global_cur));
-        const int32_t head_pri = static_cast<int32_t>(MEM_W(4, head_node));
+        const int32_t head_pri = static_cast<int32_t>(MEM_W(4, head_thread));
         if (cur_pri < head_pri) {
+            static int afa_preempt_count = 0;
+            if (afa_preempt_count < 8) {
+                ++afa_preempt_count;
+                recomp_boot_logf("[boot] afa: func_8023E840 preempt -> func_80241DFC (head_pri=%d cur_pri=%d)",
+                                 head_pri, cur_pri);
+            }
             MEM_H(0x10, global_cur) = 2;
             ctx->r4 = 0; // func_80241DFC reads D_802516E0, not list head (asm/42750.s).
             func_80241DFC(rdram, ctx);
@@ -319,23 +667,32 @@ RECOMP_FUNC void func_8023E840(uint8_t* rdram, recomp_context* ctx) {
 
     ctx->r4 = saved_ie;
     func_80241780(rdram, ctx);
+
+    // asm/31B30.s: func_8023169C ends with jal func_8023E840 then .L80231778 → pause_self.
+    // First returns may be from other callers; tail return is usually #1..#3 during boot.
+    static int afa_func_8023e840_ret_count = 0;
+    if (afa_func_8023e840_ret_count < 5) {
+        ++afa_func_8023e840_ret_count;
+        recomp_boot_logf("[boot] afa: func_8023E840 return #%d cur_tcb=0x%08X", afa_func_8023e840_ret_count,
+                         static_cast<uint32_t>(afa_get_current_thread_tcb(rdram)));
+    }
 }
 
-// Game: asm/42750.s func_80241F44 — pop highest-priority thread from list head at a0.
-static gpr afa_thread_queue_pop(uint8_t* rdram, gpr list_head) {
+// Game: asm/42750.s func_80241F44 — v0 = *a0; *a0 = (*v0)->next; a0 is &D_802516D8.
+static gpr afa_scheduler_pop_head(uint8_t* rdram, gpr list_head_ptr) {
     (void)rdram;
-    const gpr first = MEM_W(0, list_head);
-    if (first == 0) {
+    const gpr head = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, list_head_ptr)));
+    if (head == 0) {
         return 0;
     }
-    MEM_W(0, list_head) = MEM_W(0, first);
-    return first;
+    const gpr next = static_cast<gpr>(static_cast<int32_t>(MEM_W(0, head)));
+    MEM_W(0, list_head_ptr) = static_cast<int32_t>(static_cast<uint32_t>(next));
+    return head;
 }
 
 RECOMP_FUNC void func_80241F44(uint8_t* rdram, recomp_context* ctx) {
-    const gpr list_head = afa_fixup_list_head_ptr(ctx->r4);
-    const gpr node = afa_thread_queue_pop(rdram, list_head);
-    ctx->r2 = node;
+    const gpr list_head_ptr = afa_fixup_list_head_ptr(ctx->r4);
+    ctx->r2 = afa_scheduler_pop_head(rdram, list_head_ptr);
 }
 
 // Game: asm/42750.s func_80241DFC — save current thread context, re-enqueue if runnable, dispatch next.
@@ -390,6 +747,12 @@ static void afa_save_thread_context(uint8_t* rdram, recomp_context* ctx, gpr tcb
 }
 
 RECOMP_FUNC void func_80241DFC(uint8_t* rdram, recomp_context* ctx) {
+    static int afa_dfc_count = 0;
+    if (afa_dfc_count < 8) {
+        ++afa_dfc_count;
+        recomp_boot_logf("[boot] afa: func_80241DFC #%d cur_tcb=0x%08X", afa_dfc_count,
+                         static_cast<uint32_t>(afa_get_current_thread_tcb(rdram)));
+    }
     (void)ctx->r4; // asm passes D_802516D8 on preempt path; save uses D_802516E0 current thread.
     gpr tcb = afa_get_current_thread_tcb(rdram);
     if (!afa_is_plausible_tcb(tcb)) {
@@ -433,6 +796,13 @@ RECOMP_FUNC void func_80237360(uint8_t* rdram, recomp_context* ctx) {
         func_80241EFC(rdram, ctx);
         ctx->r4 = prev_r4;
         ctx->r5 = prev_r5;
+        static int afa_start_log_count = 0;
+        if (afa_start_log_count < 8) {
+            ++afa_start_log_count;
+            recomp_boot_logf("[boot] afa: func_80237360 start/enqueue tcb=0x%08X +4=%d queue=0x%08X",
+                             static_cast<uint32_t>(tcb_arg), static_cast<int32_t>(MEM_W(4, tcb_arg)),
+                             static_cast<uint32_t>(afa_scheduler_peek_head_thread(rdram)));
+        }
         goto done;
     }
 
@@ -499,6 +869,25 @@ done:
     func_80241780(rdram, ctx);
 }
 
+// Scheduler dispatch: func_map (load_overlays) then static section table (recomp_overlays.inl).
+static recomp_func_t* afa_lookup_recomp_func(uint32_t vram) {
+    if (recomp_func_t* f = recomp::overlays::try_get_function(static_cast<int32_t>(vram))) {
+        return f;
+    }
+    for (const auto& [rom, section_index] : recomp::overlays::get_vrom_to_section_map()) {
+        (void)section_index;
+        if (recomp_func_t* f = recomp::overlays::get_func_by_section_rom_function_vram(rom, vram)) {
+            return f;
+        }
+    }
+    switch (vram) {
+    case 0x8023DCE8u:
+        return func_8023DCE8;
+    default:
+        return nullptr;
+    }
+}
+
 // Game: asm/42750.s func_80241F54 — restore TCB and dispatch (eret → thread PC at +0x11C).
 static void afa_restore_thread_and_run(uint8_t* rdram, recomp_context* ctx, gpr tcb) {
     cop0_status_write(ctx, MEM_W(0x118, tcb));
@@ -535,6 +924,19 @@ static void afa_restore_thread_and_run(uint8_t* rdram, recomp_context* ctx, gpr 
     ctx->r30 = static_cast<gpr>(static_cast<int32_t>(static_cast<uint32_t>(LD(0xF8, tcb))));
     ctx->r31 = static_cast<gpr>(static_cast<int32_t>(static_cast<uint32_t>(LD(0x100, tcb))));
 
+    // Never context-switched: +0x20..+0x30 still zero from func_80237210; use init SP/arg not stale GPR slots.
+    if (MEM_W(0x20, tcb) == 0 && MEM_W(0x28, tcb) == 0) {
+        const gpr init_sp = static_cast<gpr>(static_cast<int32_t>(MEM_W(0xF0, tcb)));
+        if (afa_is_game_vram_ptr(init_sp)) {
+            ctx->r29 = init_sp;
+        }
+        const gpr init_a0 = static_cast<gpr>(static_cast<int32_t>(MEM_W(0x38, tcb)));
+        if (init_a0 != 0) {
+            ctx->r4 = afa_fixup_relocated_vram(init_a0);
+        }
+        ctx->r31 = 0;
+    }
+
     if (MEM_W(0x18, tcb) != 0) {
         set_cop1_cs(static_cast<uint32_t>(MEM_W(0x12C, tcb)));
         ctx->f20.u64 = LD(0x180, tcb);
@@ -551,34 +953,86 @@ static void afa_restore_thread_and_run(uint8_t* rdram, recomp_context* ctx, gpr 
     }
 
     if (!afa_is_game_vram_ptr(ctx->r29)) {
-        ctx->r29 = afa_vaddr(0x8027CB60u);
+        const gpr boot_sp = static_cast<gpr>(static_cast<int32_t>(MEM_W(0xF0, tcb)));
+        ctx->r29 = afa_is_game_vram_ptr(boot_sp) ? boot_sp : afa_vaddr(0x8027CB60u);
     }
 
-    recomp_boot_logf("[boot] afa: dispatch thread PC=0x%08X sp=0x%08X tcb=0x%08X", entry_pc,
-                     static_cast<uint32_t>(ctx->r29), static_cast<uint32_t>(tcb));
-    recomp_func_t* const entry = get_function(static_cast<int32_t>(entry_pc));
+    static int afa_dispatch_seq = 0;
+    ++afa_dispatch_seq;
+    if (afa_dispatch_seq <= 12) {
+        recomp_boot_logf("[boot] afa: dispatch #%d thread PC=0x%08X sp=0x%08X tcb=0x%08X", afa_dispatch_seq,
+                         entry_pc, static_cast<uint32_t>(ctx->r29), static_cast<uint32_t>(tcb));
+    }
+    recomp_func_t* const entry = afa_lookup_recomp_func(entry_pc);
+    if (entry == nullptr) {
+        recomp_boot_logf("[boot] FATAL: afa_lookup_recomp_func miss at 0x%08X (see stderr)", entry_pc);
+        std::fprintf(stderr, "Failed to find function at 0x%08X\n", entry_pc);
+        std::fflush(stderr);
+        std::exit(EXIT_FAILURE);
+    }
     entry(rdram, ctx);
+}
+
+// Trampolines: recompiled thread bodies have no boot logs (asm/31B30.s thread table).
+RECOMP_FUNC void afa_func_8023169C_bootlog(uint8_t* rdram, recomp_context* ctx) {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        recomp_boot_log("[boot] afa: func_8023169C entered (game thread, asm/31B30.s)");
+    }
+    func_8023169C(rdram, ctx);
+}
+
+RECOMP_FUNC void afa_func_80231584_bootlog(uint8_t* rdram, recomp_context* ctx) {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        recomp_boot_log("[boot] afa: func_80231584 entered (audio thread, asm/31B30.s)");
+    }
+    func_80231584(rdram, ctx);
+}
+
+RECOMP_FUNC void afa_func_80231630_bootlog(uint8_t* rdram, recomp_context* ctx) {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        recomp_boot_log("[boot] afa: func_80231630 entered (VI thread, asm/31B30.s)");
+    }
+    func_80231630(rdram, ctx);
+}
+
+RECOMP_FUNC void afa_func_80248D30_bootlog(uint8_t* rdram, recomp_context* ctx) {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        recomp_boot_log("[boot] afa: func_80248D30 entered (PI DMA thread, asm/3F660.s)");
+    }
+    func_80248D30(rdram, ctx);
+}
+
+RECOMP_FUNC void afa_func_8023DCE8_bootlog(uint8_t* rdram, recomp_context* ctx) {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        recomp_boot_log("[boot] afa: func_8023DCE8 entered (VI mgr thread, asm/3EA90.s / func_8023DB60 pri=0xFE)");
+    }
+    func_8023DCE8(rdram, ctx);
 }
 
 // Game: asm/42750.s — context switch tail; N64Recomp stub body is empty (funcs_17.c).
 RECOMP_FUNC void func_80241F54(uint8_t* rdram, recomp_context* ctx) {
-    const gpr list_head = afa_fixup_list_head_ptr(afa_vaddr(0x802516D8u));
+    const gpr list_head_ptr = afa_fixup_list_head_ptr(afa_vaddr(0x802516D8u));
     const gpr cur_thread_ptr = afa_vaddr(0x802516E0u);
 
-    gpr thread = afa_thread_queue_pop(rdram, list_head);
+    // Game: jal func_80241F44 then sw v0 -> D_802516E0; restore from k0 = v0 (asm/42750.s 80241F54).
+    gpr thread = afa_scheduler_pop_head(rdram, list_head_ptr);
     thread = afa_fixup_thread_tcb(thread);
     if (!afa_is_plausible_tcb(thread)) {
-        const gpr queued = MEM_W(0, list_head);
-        if (afa_is_plausible_tcb(queued)) {
-            thread = queued;
-            MEM_W(0, list_head) = MEM_W(0, thread);
-        } else {
-            thread = afa_main_thread_tcb();
-            static bool logged_bad_queue = false;
-            if (!logged_bad_queue) {
-                recomp_boot_log("[boot] afa: func_80241F54 — empty run queue, using main TCB (0x80280EB8)");
-                logged_bad_queue = true;
-            }
+        thread = afa_main_thread_tcb();
+        static bool logged_bad_queue = false;
+        if (!logged_bad_queue) {
+            recomp_boot_log("[boot] afa: func_80241F54 — empty run queue, using main TCB (0x80281068)");
+            logged_bad_queue = true;
         }
     }
 
@@ -888,10 +1342,11 @@ void afa_on_init_after_overlays(uint8_t* rdram, recomp_context* ctx) {
     recomp::overlays::add_loaded_function(0x80248C50, func_80248C50);
     recomp::overlays::add_loaded_function(0x80200050, recomp_entrypoint);
     recomp::overlays::add_loaded_function(0x80231150, recomp_rom_main);
-    recomp::overlays::add_loaded_function(0x8023169C, func_8023169C);
-    recomp::overlays::add_loaded_function(0x80248D30, func_80248D30); // DMA — asm/3F660.s
-    recomp::overlays::add_loaded_function(0x80231584, func_80231584); // audio/OS loop — asm/31B30.s
-    recomp::overlays::add_loaded_function(0x80231630, func_80231630); // VI-related — asm/31B30.s
+    recomp::overlays::add_loaded_function(0x8023169C, afa_func_8023169C_bootlog);
+    recomp::overlays::add_loaded_function(0x80248D30, afa_func_80248D30_bootlog);
+    recomp::overlays::add_loaded_function(0x80231584, afa_func_80231584_bootlog);
+    recomp::overlays::add_loaded_function(0x80231630, afa_func_80231630_bootlog);
+    recomp::overlays::add_loaded_function(0x8023DCE8, afa_func_8023DCE8_bootlog);
     recomp_boot_log("[boot] afa: registered entrypoint + main + thread entries in func_map");
 }
 
